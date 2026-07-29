@@ -187,20 +187,20 @@ export function makeDirt(
     const grit = valueNoise2D(x * 0.4, y * 0.4, seed + 12);
     const pebble = hash2(x, y, seed + 3);
     const moist = fbm2D(x * 0.7, y * 0.7, { ...noiseOpts, seed: seed + 44 });
-    let r = 72 + n * 42 + grit * 18;
-    let g = 52 + n * 32 + grit * 12;
-    let b = 32 + n * 20 + grit * 8;
+    let r = 98 + n * 38 + grit * 16;
+    let g = 72 + n * 28 + grit * 12;
+    let b = 48 + n * 18 + grit * 8;
     if (pebble > 0.9) {
       r += 28;
       g += 22;
       b += 14;
     } else if (pebble < 0.06) {
-      r -= 18;
-      g -= 14;
-      b -= 10;
+      r -= 14;
+      g -= 10;
+      b -= 8;
     }
     if (moist > 0.62) {
-      const m = (moist - 0.62) * 55;
+      const m = (moist - 0.62) * 40;
       r -= m;
       g -= m * 0.7;
       b -= m * 0.4;
@@ -271,19 +271,20 @@ export function createAsphaltTexture(
     });
 
     // Aggregate flecks
-    const agg = fine > 0.93 ? 22 : fine < 0.05 ? -14 : 0;
+    const agg = fine > 0.93 ? 22 : fine < 0.05 ? -10 : 0;
 
-    let base = 42 + n * 28 + grit * 14 + wear * 10 + agg;
+    // Mid-gray asphalt (~0.38–0.48 luminance) so dusk still reads surface detail.
+    let base = 88 + n * 32 + grit * 16 + wear * 12 + agg;
     // Faded traffic lane polish (slightly lighter bands)
     const lane = Math.abs(((x / size) * 10) % 1 - 0.5);
-    if (lane < 0.08) base += 8;
+    if (lane < 0.08) base += 10;
 
     let r = base + grit * 3;
     let g = base + grit * 2;
-    let b = base - 3 + grit;
+    let b = base - 2 + grit;
 
     if (oil > 0.68) {
-      const o = (oil - 0.68) * 90;
+      const o = (oil - 0.68) * 70;
       r -= o * 0.55;
       g -= o * 0.35;
       b -= o * 0.15;
@@ -291,9 +292,9 @@ export function createAsphaltTexture(
 
     if (crack > 0) {
       const k = Math.min(1, crack);
-      r -= 38 * k;
-      g -= 36 * k;
-      b -= 32 * k;
+      r -= 28 * k;
+      g -= 26 * k;
+      b -= 24 * k;
     }
 
     return [r, g, b];
@@ -325,7 +326,7 @@ export function createConcreteTexture(
     });
     const pit = hash2(x * 3, y * 3, seed + 33);
 
-    let v = 132 + n * 32 + speck * 16;
+    let v = 148 + n * 34 + speck * 18;
 
     // Expansion joints / slab grid
     const jx = x % slab;
@@ -410,9 +411,9 @@ export function createMetalPlateTexture(
       Math.abs(Math.sin(y * 0.55 + x * 0.018 + panelX)) < 0.018 ? 22 : 0;
     const oxidation = rustHeavy ? 1.35 : 1;
 
-    let r = (rustHeavy ? 68 : 82) + panelShade + rust * 30 * oxidation + scratch;
-    let g = (rustHeavy ? 48 : 66) + panelShade * 0.7 + rust * 14;
-    let b = (rustHeavy ? 36 : 52) + panelShade * 0.5 + rust * 6;
+    let r = (rustHeavy ? 82 : 98) + panelShade + rust * 30 * oxidation + scratch;
+    let g = (rustHeavy ? 60 : 80) + panelShade * 0.7 + rust * 14;
+    let b = (rustHeavy ? 46 : 66) + panelShade * 0.5 + rust * 6;
 
     // Galvanized cool midtone patches
     if (!rustHeavy && rust < 0.35 && bloom < 0.4) {
@@ -478,7 +479,7 @@ export function createBrickTexture(
     const isMortar = localX < mortar || localY < mortar;
     if (isMortar) {
       const grit = hash2(x, y, seed);
-      const m = 78 + grit * 28;
+      const m = 98 + grit * 28;
       // Dirtier mortar in streaks
       const dirty = fbm2D(x, y, {
         seed: seed + 4,
@@ -507,10 +508,10 @@ export function createBrickTexture(
       persistence: 0.55,
     });
 
-    // Per-brick palette: red clay → brown → scorched
-    let r = 118 + variation * 55 + hueShift * 12;
-    let g = 62 + variation * 28 + hueShift * 6;
-    let b = 48 + variation * 18;
+    // Per-brick palette: red clay → brown → scorched (mid luminance for dusk)
+    let r = 138 + variation * 50 + hueShift * 12;
+    let g = 78 + variation * 28 + hueShift * 6;
+    let b = 60 + variation * 18;
 
     if (hueShift > 0.72) {
       // Browner brick
@@ -576,12 +577,12 @@ export function createCamoTarpTexture(
   repeat: [number, number] = [2, 2],
 ): THREE.CanvasTexture {
   const palette = [
-    [62, 78, 48],
-    [92, 86, 54],
-    [40, 52, 36],
-    [110, 98, 62],
-    [48, 58, 42],
-    [76, 68, 44],
+    [78, 92, 58],
+    [108, 100, 64],
+    [58, 68, 48],
+    [122, 108, 72],
+    [64, 74, 54],
+    [90, 80, 56],
   ];
   const image = fillImageData(size, (x, y) => {
     const n1 = fbm2D(x, y, {
@@ -673,7 +674,7 @@ export function createPlasterTexture(
     });
     const crackNoise = ridgeCrack(x, y, seed + 50, 0.06);
     const hair = ridgeCrack(x + 30, y, seed + 77, 0.11);
-    let v = 158 + n * 38;
+    let v = 172 + n * 38;
     if (crackNoise > 0.82) v -= (crackNoise - 0.82) * 160;
     if (hair > 0.88) v -= 28;
     const soot = fbm2D(x * 0.6, y * 0.6, {
@@ -811,70 +812,70 @@ export class LevelTextureKit {
       t.anisotropy = anisotropy;
     }
 
-    // Near-white tint multipliers so procedural maps read with full contrast.
+    // Near-white tint multipliers — albedo maps carry the color; dusk stays readable.
     this.matAsphalt = new THREE.MeshStandardMaterial({
       map: this.asphalt,
-      color: 0xb4b4b6,
+      color: 0xffffff,
       roughness: 0.94,
       metalness: 0.02,
     });
     this.matConcrete = new THREE.MeshStandardMaterial({
       map: this.concrete,
-      color: 0xd2d0ca,
+      color: 0xffffff,
       roughness: 0.9,
       metalness: 0.03,
     });
     this.matConcreteDark = new THREE.MeshStandardMaterial({
       map: this.concrete,
-      color: 0x7a7872,
+      color: 0xc8c6c0,
       roughness: 0.92,
       metalness: 0.05,
     });
     this.matBrick = new THREE.MeshStandardMaterial({
       map: this.brick,
-      color: 0xe8dcd0,
+      color: 0xffffff,
       roughness: 0.88,
       metalness: 0.02,
     });
     this.matPlaster = new THREE.MeshStandardMaterial({
       map: this.plaster,
-      color: 0xe4ddd0,
+      color: 0xffffff,
       roughness: 0.91,
       metalness: 0.01,
     });
     this.matMetal = new THREE.MeshStandardMaterial({
       map: this.metal,
-      color: 0xc4bbb2,
+      color: 0xdddddd,
       roughness: 0.42,
       metalness: 0.82,
     });
     this.matMetalRust = new THREE.MeshStandardMaterial({
       map: this.metalRustMap,
-      color: 0xc49a6a,
+      color: 0xdddddd,
       roughness: 0.78,
       metalness: 0.42,
     });
     this.matSandbag = new THREE.MeshStandardMaterial({
       map: this.camo,
-      color: 0xc4b888,
+      color: 0xdddddd,
       roughness: 0.96,
       metalness: 0.0,
     });
     this.matCamo = new THREE.MeshStandardMaterial({
       map: this.camo,
-      color: 0xb0a878,
+      color: 0xdddddd,
       roughness: 0.9,
       metalness: 0.04,
     });
     this.matWood = new THREE.MeshStandardMaterial({
       map: this.wood,
-      color: 0xd2b48c,
+      color: 0xffffff,
       roughness: 0.84,
       metalness: 0.02,
     });
     this.matDirt = new THREE.MeshStandardMaterial({
       map: this.dirt,
-      color: 0x9a8060,
+      color: 0xdddddd,
       roughness: 0.97,
       metalness: 0.0,
     });
@@ -889,7 +890,7 @@ export class LevelTextureKit {
     });
     this.matRoadMark = new THREE.MeshStandardMaterial({
       map: this.roadMark,
-      color: 0xf0e8d0,
+      color: 0xffffff,
       roughness: 0.88,
       metalness: 0.0,
     });
@@ -907,13 +908,13 @@ export class LevelTextureKit {
     });
     this.matTrim = new THREE.MeshStandardMaterial({
       map: this.metal,
-      color: 0x3a3c40,
+      color: 0x9a9ca0,
       roughness: 0.55,
       metalness: 0.65,
     });
     this.matBarrel = new THREE.MeshStandardMaterial({
       map: this.metalRustMap,
-      color: 0x4a6a48,
+      color: 0x8aaa78,
       roughness: 0.7,
       metalness: 0.5,
     });

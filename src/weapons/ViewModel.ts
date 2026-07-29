@@ -20,25 +20,26 @@ interface PoseTransform {
   rot: [number, number, number];
 }
 
-/** Tuned for COD-style FOV viewmodels: tight ADS center, pronounced sprint tilt. */
+/** Tuned for COD-style FOV viewmodels: receiver visible on hip, tight ADS, pronounced sprint tilt. */
 const POSES: Record<WeaponId, Record<ViewPose, PoseTransform>> = {
   ar: {
-    hip: { pos: [0.22, -0.22, -0.42], rot: [0.055, 0.075, 0.035] },
-    ads: { pos: [0.0, -0.142, -0.265], rot: [0.0, 0.0, 0.0] },
-    sprint: { pos: [0.3, -0.34, -0.36], rot: [0.62, 0.42, -0.52] },
-    reload: { pos: [0.17, -0.3, -0.38], rot: [0.42, -0.18, 0.28] },
+    // Pulled in / raised so lower+upper receiver sit in frame (not a bottom-right silhouette).
+    hip: { pos: [0.16, -0.165, -0.34], rot: [0.04, 0.06, 0.028] },
+    ads: { pos: [0.0, -0.132, -0.255], rot: [0.0, 0.0, 0.0] },
+    sprint: { pos: [0.26, -0.3, -0.32], rot: [0.62, 0.42, -0.52] },
+    reload: { pos: [0.14, -0.26, -0.34], rot: [0.42, -0.18, 0.28] },
   },
   pistol: {
-    hip: { pos: [0.2, -0.2, -0.38], rot: [0.04, 0.055, 0.02] },
-    ads: { pos: [0.0, -0.135, -0.285], rot: [0.0, 0.0, 0.0] },
-    sprint: { pos: [0.28, -0.3, -0.33], rot: [0.48, 0.5, -0.35] },
-    reload: { pos: [0.15, -0.28, -0.34], rot: [0.36, -0.22, 0.24] },
+    hip: { pos: [0.15, -0.155, -0.32], rot: [0.03, 0.045, 0.018] },
+    ads: { pos: [0.0, -0.128, -0.275], rot: [0.0, 0.0, 0.0] },
+    sprint: { pos: [0.24, -0.26, -0.3], rot: [0.48, 0.5, -0.35] },
+    reload: { pos: [0.12, -0.24, -0.3], rot: [0.36, -0.22, 0.24] },
   },
   knife: {
-    hip: { pos: [0.24, -0.18, -0.35], rot: [0.15, -0.4, 0.35] },
-    ads: { pos: [0.1, -0.12, -0.32], rot: [0.05, -0.2, 0.15] },
-    sprint: { pos: [0.32, -0.26, -0.3], rot: [0.55, -0.6, 0.58] },
-    reload: { pos: [0.22, -0.2, -0.34], rot: [0.2, -0.35, 0.4] },
+    hip: { pos: [0.2, -0.14, -0.3], rot: [0.15, -0.4, 0.35] },
+    ads: { pos: [0.08, -0.1, -0.28], rot: [0.05, -0.2, 0.15] },
+    sprint: { pos: [0.28, -0.22, -0.28], rot: [0.55, -0.6, 0.58] },
+    reload: { pos: [0.18, -0.16, -0.3], rot: [0.2, -0.35, 0.4] },
   },
 };
 
@@ -58,14 +59,18 @@ interface MatOpts {
 }
 
 function mat(color: number, opts: MatOpts = {}): MeshStandardMaterial {
-  return new MeshStandardMaterial({
+  const m = new MeshStandardMaterial({
     color,
-    metalness: opts.metalness ?? 0.85,
-    roughness: opts.roughness ?? 0.35,
+    metalness: opts.metalness ?? 0.8,
+    roughness: opts.roughness ?? 0.45,
     emissive: new Color(opts.emissive ?? 0x000000),
     emissiveIntensity: opts.emissiveIntensity ?? 0,
     flatShading: opts.flatShading ?? false,
   });
+  // Keep depth writes so viewmodel occludes correctly under the camera.
+  m.depthTest = true;
+  m.depthWrite = true;
+  return m;
 }
 
 /**
@@ -93,30 +98,89 @@ export class ViewModel {
   private idleT = 0;
   private _reloadDuration = 1.6;
 
-  // ─── PBR palette: nitride steel, polymer grit, muted accents ─────────────
-  private readonly nitride = mat(0x141618, { metalness: 0.96, roughness: 0.22 });
-  private readonly nitrideWorn = mat(0x1e2226, { metalness: 0.9, roughness: 0.34 });
-  private readonly steel = mat(0x2c3136, { metalness: 0.94, roughness: 0.28 });
-  private readonly steelBright = mat(0x3a4046, { metalness: 0.88, roughness: 0.36 });
-  private readonly polymer = mat(0x0f1012, { metalness: 0.08, roughness: 0.82 });
-  private readonly polymerGrit = mat(0x0a0b0c, { metalness: 0.05, roughness: 0.9 });
-  private readonly polymerSoft = mat(0x16181a, { metalness: 0.12, roughness: 0.74 });
-  private readonly railTooth = mat(0x2a2e32, { metalness: 0.85, roughness: 0.4 });
-  private readonly opticHousing = mat(0x101214, { metalness: 0.75, roughness: 0.38 });
-  private readonly opticGlass = mat(0x060c12, {
-    metalness: 0.45,
-    roughness: 0.08,
-    emissive: 0x0a1820,
-    emissiveIntensity: 0.22,
+  // ─── PBR palette: dusk-readable nitride / polymer (not near-black) ───────
+  // Metal: mid-gray nitride + specular so warm sun catches edges.
+  // Soft emissive rim 0x111418 keeps silhouettes readable in shadow.
+  private readonly nitride = mat(0x2a2e32, {
+    metalness: 0.88,
+    roughness: 0.42,
+    emissive: 0x111418,
+    emissiveIntensity: 0.18,
   });
-  private readonly ironGlow = mat(0x1a0a08, {
-    metalness: 0.6,
+  private readonly nitrideWorn = mat(0x32383e, {
+    metalness: 0.82,
+    roughness: 0.48,
+    emissive: 0x111418,
+    emissiveIntensity: 0.14,
+  });
+  private readonly steel = mat(0x3a3f45, {
+    metalness: 0.85,
+    roughness: 0.4,
+    emissive: 0x111418,
+    emissiveIntensity: 0.12,
+  });
+  private readonly steelBright = mat(0x4a5058, {
+    metalness: 0.78,
     roughness: 0.45,
-    emissive: 0xff4422,
-    emissiveIntensity: 0.35,
+    emissive: 0x111418,
+    emissiveIntensity: 0.1,
   });
-  private readonly blade = mat(0xb8c8d0, { metalness: 1, roughness: 0.14 });
-  private readonly bladeEdge = mat(0xd0d4d8, { metalness: 1, roughness: 0.1 });
+  // Polymer: charcoal with roughness variation across grit / soft / base.
+  private readonly polymer = mat(0x1c2228, {
+    metalness: 0.08,
+    roughness: 0.85,
+    emissive: 0x111418,
+    emissiveIntensity: 0.1,
+  });
+  private readonly polymerGrit = mat(0x161b20, {
+    metalness: 0.05,
+    roughness: 0.92,
+    emissive: 0x111418,
+    emissiveIntensity: 0.08,
+  });
+  private readonly polymerSoft = mat(0x222830, {
+    metalness: 0.1,
+    roughness: 0.78,
+    emissive: 0x111418,
+    emissiveIntensity: 0.1,
+  });
+  private readonly railTooth = mat(0x3a3f45, {
+    metalness: 0.8,
+    roughness: 0.48,
+    emissive: 0x111418,
+    emissiveIntensity: 0.12,
+  });
+  private readonly opticHousing = mat(0x2a2e32, {
+    metalness: 0.75,
+    roughness: 0.45,
+    emissive: 0x111418,
+    emissiveIntensity: 0.12,
+  });
+  // Optic glass: cooler teal tint + stronger emissive so the window reads at dusk.
+  private readonly opticGlass = mat(0x1a3040, {
+    metalness: 0.35,
+    roughness: 0.12,
+    emissive: 0x1a3848,
+    emissiveIntensity: 0.55,
+  });
+  private readonly ironGlow = mat(0x2a1814, {
+    metalness: 0.55,
+    roughness: 0.5,
+    emissive: 0xff4422,
+    emissiveIntensity: 0.45,
+  });
+  private readonly blade = mat(0xb8c8d0, {
+    metalness: 0.9,
+    roughness: 0.22,
+    emissive: 0x111418,
+    emissiveIntensity: 0.08,
+  });
+  private readonly bladeEdge = mat(0xd0d4d8, {
+    metalness: 0.92,
+    roughness: 0.18,
+    emissive: 0x111418,
+    emissiveIntensity: 0.06,
+  });
   private readonly flashMat = mat(0xffcc66, {
     metalness: 0,
     roughness: 1,

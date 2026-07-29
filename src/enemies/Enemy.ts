@@ -100,12 +100,12 @@ export class Enemy {
     this.patrolSeed = Math.random() * 1000;
 
     this.bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x3a4534,
+      color: 0x4a5538,
       roughness: 0.88,
       metalness: 0.05,
     });
     this.gearMat = new THREE.MeshStandardMaterial({
-      color: 0x2a2e28,
+      color: 0x2c3036,
       roughness: 0.7,
       metalness: 0.25,
     });
@@ -364,9 +364,9 @@ export class Enemy {
 
     // Rifle
     const weaponMat = new THREE.MeshStandardMaterial({
-      color: 0x1a1c18,
-      roughness: 0.45,
-      metalness: 0.7,
+      color: 0x2a2e32,
+      roughness: 0.48,
+      metalness: 0.75,
     });
     this.materials.push(weaponMat);
     const weapon = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.85), weaponMat);
