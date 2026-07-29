@@ -1,0 +1,866 @@
+/* ==========================================================================
+   BLACKOPS: FRONTLINE — global + HUD + Main Menu
+   Accent: #e85d04  |  Fonts: Orbitron / Rajdhani
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bo-accent: #e85d04;
+  --bo-accent-dim: #c44d03;
+  --bo-accent-glow: rgba(232, 93, 4, 0.45);
+  --bo-bg: #07090d;
+  --bo-panel: rgba(8, 12, 18, 0.72);
+  --bo-panel-border: rgba(232, 93, 4, 0.35);
+  --bo-text: #e8ecef;
+  --bo-muted: #8a949e;
+  --bo-danger: #ff3b3b;
+  --bo-health: #2ecc71;
+  --bo-armor: #3d8bfd;
+  --font-display: 'Orbitron', sans-serif;
+  --font-ui: 'Rajdhani', sans-serif;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bo-bg);
+  color: var(--bo-text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#app canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* --------------------------------------------------------------------------
+   HUD
+   -------------------------------------------------------------------------- */
+
+.hud-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+  font-family: var(--font-ui);
+}
+
+.hud-root.hud-hidden {
+  display: none;
+}
+
+.hud-damage-vignette {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 40%,
+    rgba(120, 0, 0, 0.55) 100%
+  );
+  pointer-events: none;
+}
+
+.hud-root.hud-damage-flash .hud-damage-vignette {
+  animation: hud-damage-pulse 0.35s ease-out;
+}
+
+@keyframes hud-damage-pulse {
+  0% {
+    opacity: 0.95;
+    background: radial-gradient(
+      ellipse at center,
+      rgba(180, 0, 0, 0.15) 20%,
+      rgba(140, 0, 0, 0.75) 100%
+    );
+  }
+  100% {
+    opacity: 0.35;
+  }
+}
+
+/* Crosshair */
+.hud-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform: translate(-50%, -50%);
+}
+
+.hud-cross-arm {
+  position: absolute;
+  background: rgba(240, 244, 248, 0.92);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.85);
+}
+
+.hud-cross-t,
+.hud-cross-b {
+  width: 2px;
+  height: 10px;
+  left: 50%;
+}
+
+.hud-cross-l,
+.hud-cross-r {
+  width: 10px;
+  height: 2px;
+  top: 50%;
+}
+
+.hud-cross-t {
+  top: 0;
+  transform: translate(-50%, calc(-100% - 4px));
+}
+
+.hud-cross-b {
+  top: 0;
+  transform: translate(-50%, 4px);
+}
+
+.hud-cross-l {
+  left: 0;
+  transform: translate(calc(-100% - 4px), -50%);
+}
+
+.hud-cross-r {
+  left: 0;
+  transform: translate(4px, -50%);
+}
+
+.hud-cross-dot {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: var(--bo-accent);
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 3px var(--bo-accent-glow);
+}
+
+/* Hitmarker */
+.hud-hitmarker {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  transform: translate(-50%, -50%) scale(0.6);
+  opacity: 0;
+  transition: opacity 0.08s linear, transform 0.08s linear;
+}
+
+.hud-hitmarker span {
+  position: absolute;
+  width: 8px;
+  height: 2px;
+  background: #f5f5f5;
+}
+
+.hud-hitmarker span:nth-child(1) {
+  top: 4px;
+  left: 4px;
+  transform: rotate(45deg);
+}
+
+.hud-hitmarker span:nth-child(2) {
+  top: 4px;
+  right: 4px;
+  transform: rotate(-45deg);
+}
+
+.hud-hitmarker span:nth-child(3) {
+  bottom: 4px;
+  left: 4px;
+  transform: rotate(-45deg);
+}
+
+.hud-hitmarker span:nth-child(4) {
+  bottom: 4px;
+  right: 4px;
+  transform: rotate(45deg);
+}
+
+.hud-hitmarker-active {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.hud-hitmarker-hs span {
+  background: var(--bo-accent);
+  box-shadow: 0 0 6px var(--bo-accent-glow);
+}
+
+/* Compass */
+.hud-compass {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 220px;
+  text-align: center;
+}
+
+.hud-compass-window {
+  position: relative;
+  height: 28px;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  border-bottom: 1px solid rgba(232, 93, 4, 0.4);
+}
+
+.hud-compass-strip {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1200px;
+  height: 100%;
+  transform: translateX(-50%);
+  will-change: transform;
+}
+
+.hud-compass-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  text-align: center;
+  color: var(--bo-muted);
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.hud-compass-tick i {
+  display: block;
+  width: 1px;
+  height: 8px;
+  margin: 0 auto 2px;
+  background: var(--bo-muted);
+}
+
+.hud-compass-tick b {
+  font-weight: 600;
+}
+
+.hud-compass-minor {
+  position: absolute;
+  top: 2px;
+  width: 1px;
+  height: 4px;
+  background: rgba(138, 148, 158, 0.45);
+  transform: translateX(-50%);
+}
+
+.hud-compass-needle {
+  width: 0;
+  height: 0;
+  margin: 2px auto 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 6px solid var(--bo-accent);
+}
+
+.hud-compass-label {
+  margin-top: 2px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--bo-accent);
+}
+
+/* Killfeed */
+.hud-killfeed {
+  position: absolute;
+  top: 64px;
+  right: 24px;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+}
+
+.hud-killfeed-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bo-panel);
+  border-left: 2px solid var(--bo-accent);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  animation: hud-kf-in 0.25s ease-out;
+  max-width: 100%;
+}
+
+.hud-killfeed-fade {
+  animation: hud-kf-out 0.35s ease-in forwards;
+}
+
+@keyframes hud-kf-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes hud-kf-out {
+  to {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+.hud-kf-killer {
+  color: var(--bo-accent);
+}
+
+.hud-kf-victim {
+  color: var(--bo-text);
+}
+
+.hud-kf-weapon {
+  color: var(--bo-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.hud-kf-hs {
+  color: var(--bo-accent);
+  font-size: 8px;
+}
+
+/* Vitals */
+.hud-bottom-left {
+  position: absolute;
+  left: 28px;
+  bottom: 28px;
+}
+
+.hud-vitals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+  padding: 12px 14px;
+  background: var(--bo-panel);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 2px solid var(--bo-accent);
+  backdrop-filter: blur(6px);
+}
+
+.hud-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-bar-icon {
+  width: 16px;
+  font-size: 12px;
+  color: var(--bo-armor);
+  text-align: center;
+}
+
+.hud-bar {
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  position: relative;
+}
+
+.hud-health-fill,
+.hud-armor-fill {
+  height: 100%;
+  width: 100%;
+  transition: width 0.15s ease-out;
+}
+
+.hud-health-fill {
+  background: linear-gradient(90deg, #1e8f4a, var(--bo-health));
+}
+
+.hud-health-fill.hud-bar-critical {
+  background: linear-gradient(90deg, #8b1010, var(--bo-danger));
+  animation: hud-bar-pulse 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes hud-bar-pulse {
+  from {
+    filter: brightness(1);
+  }
+  to {
+    filter: brightness(1.35);
+  }
+}
+
+.hud-armor-fill {
+  background: linear-gradient(90deg, #1a4f9c, var(--bo-armor));
+}
+
+.hud-health-val,
+.hud-armor-val {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  min-width: 28px;
+  text-align: right;
+  letter-spacing: 0.04em;
+}
+
+/* Ammo / weapon */
+.hud-bottom-right {
+  position: absolute;
+  right: 28px;
+  bottom: 28px;
+  text-align: right;
+  padding: 12px 16px;
+  background: var(--bo-panel);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 2px solid var(--bo-accent);
+  backdrop-filter: blur(6px);
+  min-width: 140px;
+}
+
+.hud-weapon-name {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--bo-muted);
+  margin-bottom: 4px;
+}
+
+.hud-ammo {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hud-ammo-mag {
+  font-size: 36px;
+  color: var(--bo-text);
+  letter-spacing: 0.04em;
+}
+
+.hud-ammo-mag.hud-ammo-low {
+  color: var(--bo-danger);
+  animation: hud-bar-pulse 0.5s ease-in-out infinite alternate;
+}
+
+.hud-ammo-sep {
+  font-size: 20px;
+  color: var(--bo-muted);
+  margin: 0 4px;
+}
+
+.hud-ammo-reserve {
+  font-size: 20px;
+  color: var(--bo-muted);
+}
+
+/* Interact prompt */
+.hud-interact {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  transform: translateX(-50%) translateY(8px);
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--bo-panel);
+  border: 1px solid var(--bo-panel-border);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.hud-prompt-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.hud-interact kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--bo-accent);
+  color: var(--bo-accent);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* --------------------------------------------------------------------------
+   Main Menu
+   -------------------------------------------------------------------------- */
+
+.main-menu {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.main-menu.main-menu-hidden {
+  display: none;
+}
+
+.mm-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 70% 20%, rgba(232, 93, 4, 0.18), transparent 55%),
+    radial-gradient(ellipse 60% 50% at 20% 80%, rgba(20, 40, 70, 0.5), transparent 50%),
+    linear-gradient(165deg, #05070b 0%, #0c121c 42%, #151008 100%);
+}
+
+.mm-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.07;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.4) 2px,
+    rgba(0, 0, 0, 0.4) 4px
+  );
+  animation: mm-scan 8s linear infinite;
+}
+
+@keyframes mm-scan {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 100px;
+  }
+}
+
+.mm-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.75) 100%);
+}
+
+.mm-content {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 92vw);
+  padding: 32px 28px;
+  animation: mm-enter 0.7s ease-out;
+}
+
+@keyframes mm-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mm-header {
+  margin-bottom: 36px;
+  text-align: left;
+}
+
+.mm-eyebrow {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.35em;
+  color: var(--bo-accent);
+  margin-bottom: 12px;
+}
+
+.mm-title {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: clamp(28px, 6vw, 42px);
+  line-height: 1.05;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bo-text);
+  text-shadow: 0 0 40px rgba(232, 93, 4, 0.25);
+}
+
+.mm-title span {
+  color: var(--bo-accent);
+}
+
+.mm-subtitle {
+  margin-top: 10px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  color: var(--bo-muted);
+}
+
+.mm-panels {
+  position: relative;
+  min-height: 220px;
+}
+
+.mm-panel {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  animation: mm-panel-in 0.3s ease-out;
+}
+
+.mm-panel.mm-panel-active {
+  display: flex;
+}
+
+@keyframes mm-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.mm-panel-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.28em;
+  color: var(--bo-accent);
+  margin-bottom: 8px;
+}
+
+.mm-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 18px;
+  background: rgba(10, 14, 20, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid transparent;
+  color: var(--bo-text);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.mm-btn:hover,
+.mm-btn:focus-visible {
+  outline: none;
+  border-left-color: var(--bo-accent);
+  background: rgba(232, 93, 4, 0.12);
+  box-shadow: 0 0 24px rgba(232, 93, 4, 0.12);
+  transform: translateX(4px);
+}
+
+.mm-btn-primary {
+  border-left-color: var(--bo-accent);
+  background: linear-gradient(90deg, rgba(232, 93, 4, 0.22), rgba(10, 14, 20, 0.65));
+}
+
+.mm-btn-primary:hover,
+.mm-btn-primary:focus-visible {
+  background: linear-gradient(90deg, rgba(232, 93, 4, 0.38), rgba(10, 14, 20, 0.7));
+}
+
+.mm-btn-ghost {
+  margin-top: 12px;
+  letter-spacing: 0.14em;
+  font-size: 12px;
+  border-left-color: transparent;
+  background: transparent;
+}
+
+.mm-btn-tag {
+  color: var(--bo-accent);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  opacity: 0.85;
+}
+
+.mm-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.mm-slider-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--bo-muted);
+  display: flex;
+  justify-content: space-between;
+}
+
+.mm-slider-label b {
+  color: var(--bo-accent);
+  font-weight: 700;
+}
+
+.mm-slider input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+  cursor: pointer;
+}
+
+.mm-slider input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--bo-accent);
+  border: none;
+  box-shadow: 0 0 10px var(--bo-accent-glow);
+  cursor: pointer;
+}
+
+.mm-slider input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--bo-accent);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.mm-controls-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mm-controls-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--bo-muted);
+}
+
+.mm-controls-list kbd {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--bo-accent);
+  padding: 4px 8px;
+  border: 1px solid rgba(232, 93, 4, 0.4);
+  background: rgba(232, 93, 4, 0.08);
+  min-width: 88px;
+  text-align: center;
+}
+
+.mm-footer {
+  margin-top: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: rgba(138, 148, 158, 0.7);
+}
+
+.mm-footer-sep {
+  color: var(--bo-accent);
+  opacity: 0.6;
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+  .hud-bottom-left,
+  .hud-bottom-right {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .hud-bottom-right {
+    left: auto;
+  }
+
+  .hud-vitals,
+  .hud-bottom-right {
+    min-width: 0;
+    padding: 8px 10px;
+  }
+
+  .hud-ammo-mag {
+    font-size: 28px;
+  }
+
+  .hud-killfeed {
+    right: 12px;
+    width: 200px;
+  }
+
+  .mm-content {
+    padding: 20px 16px;
+  }
+}
