@@ -23,20 +23,20 @@ interface PoseTransform {
 /** Tuned for COD-style FOV viewmodels: receiver visible on hip, tight ADS, pronounced sprint tilt. */
 const POSES: Record<WeaponId, Record<ViewPose, PoseTransform>> = {
   ar: {
-    // Pulled in / raised so lower+upper receiver sit in frame (not a bottom-right silhouette).
-    hip: { pos: [0.16, -0.165, -0.34], rot: [0.04, 0.06, 0.028] },
+    // Larger + more centered so upper/lower/handguard read in hip FOV (not a corner stub).
+    hip: { pos: [0.1, -0.125, -0.28], rot: [0.028, 0.038, 0.018] },
     ads: { pos: [0.0, -0.132, -0.255], rot: [0.0, 0.0, 0.0] },
     sprint: { pos: [0.26, -0.3, -0.32], rot: [0.62, 0.42, -0.52] },
     reload: { pos: [0.14, -0.26, -0.34], rot: [0.42, -0.18, 0.28] },
   },
   pistol: {
-    hip: { pos: [0.15, -0.155, -0.32], rot: [0.03, 0.045, 0.018] },
+    hip: { pos: [0.1, -0.12, -0.27], rot: [0.022, 0.032, 0.012] },
     ads: { pos: [0.0, -0.128, -0.275], rot: [0.0, 0.0, 0.0] },
     sprint: { pos: [0.24, -0.26, -0.3], rot: [0.48, 0.5, -0.35] },
     reload: { pos: [0.12, -0.24, -0.3], rot: [0.36, -0.22, 0.24] },
   },
   knife: {
-    hip: { pos: [0.2, -0.14, -0.3], rot: [0.15, -0.4, 0.35] },
+    hip: { pos: [0.16, -0.12, -0.26], rot: [0.12, -0.35, 0.3] },
     ads: { pos: [0.08, -0.1, -0.28], rot: [0.05, -0.2, 0.15] },
     sprint: { pos: [0.28, -0.22, -0.28], rot: [0.55, -0.6, 0.58] },
     reload: { pos: [0.18, -0.16, -0.3], rot: [0.2, -0.35, 0.4] },
@@ -98,94 +98,94 @@ export class ViewModel {
   private idleT = 0;
   private _reloadDuration = 1.6;
 
-  // ─── High-contrast COD palette: dark polymer vs bright steel vs FDE accents ─
-  // Prior mid-gray stack photographed as "gray Legos" — separate value bands hard.
-  private readonly nitride = mat(0x2a3038, {
-    metalness: 0.72,
-    roughness: 0.38,
-    emissive: 0x12161c,
+  // ─── Hard value bands: charcoal polymer / dark receivers / bright steel edges ─
+  // Mid-gray stack reads as "gray Legos" in screenshots — keep bands far apart.
+  private readonly nitride = mat(0x161a20, {
+    metalness: 0.78,
+    roughness: 0.42,
+    emissive: 0x080a0e,
+    emissiveIntensity: 0.12,
+  });
+  private readonly nitrideWorn = mat(0x222830, {
+    metalness: 0.7,
+    roughness: 0.5,
+    emissive: 0x0a0c10,
+    emissiveIntensity: 0.1,
+  });
+  private readonly steel = mat(0xb4bcc6, {
+    metalness: 0.9,
+    roughness: 0.2,
+    emissive: 0x2a323c,
     emissiveIntensity: 0.28,
   });
-  private readonly nitrideWorn = mat(0x3a424c, {
-    metalness: 0.62,
-    roughness: 0.48,
-    emissive: 0x14181e,
-    emissiveIntensity: 0.22,
+  private readonly steelBright = mat(0xe4ecf4, {
+    metalness: 0.95,
+    roughness: 0.12,
+    emissive: 0x384048,
+    emissiveIntensity: 0.32,
   });
-  private readonly steel = mat(0x8a929c, {
-    metalness: 0.78,
-    roughness: 0.28,
-    emissive: 0x1c2228,
-    emissiveIntensity: 0.2,
-  });
-  private readonly steelBright = mat(0xc0c8d0, {
-    metalness: 0.85,
-    roughness: 0.22,
-    emissive: 0x202830,
-    emissiveIntensity: 0.18,
-  });
-  // Polymer: near-black with grit — must sit darker than metal receivers.
-  private readonly polymer = mat(0x14181c, {
-    metalness: 0.04,
-    roughness: 0.88,
-    emissive: 0x080a0c,
-    emissiveIntensity: 0.16,
-  });
-  private readonly polymerGrit = mat(0x0e1216, {
-    metalness: 0.03,
+  // Polymer: near-black grit — must sit well below any metal.
+  private readonly polymer = mat(0x080a0c, {
+    metalness: 0.02,
     roughness: 0.94,
-    emissive: 0x06080a,
-    emissiveIntensity: 0.14,
+    emissive: 0x020304,
+    emissiveIntensity: 0.06,
   });
-  private readonly polymerSoft = mat(0x1c2228, {
-    metalness: 0.05,
-    roughness: 0.8,
-    emissive: 0x0a0c10,
-    emissiveIntensity: 0.14,
+  private readonly polymerGrit = mat(0x050608, {
+    metalness: 0.015,
+    roughness: 0.97,
+    emissive: 0x010203,
+    emissiveIntensity: 0.05,
+  });
+  private readonly polymerSoft = mat(0x0c1014, {
+    metalness: 0.03,
+    roughness: 0.9,
+    emissive: 0x030406,
+    emissiveIntensity: 0.06,
   });
   // FDE / tan accents break the gray mass (magwell lip, stock cheek, grip panels).
-  private readonly fde = mat(0xb08a58, {
-    metalness: 0.12,
-    roughness: 0.72,
-    emissive: 0x2a1c0c,
+  private readonly fde = mat(0xc49860, {
+    metalness: 0.1,
+    roughness: 0.68,
+    emissive: 0x3a2410,
+    emissiveIntensity: 0.28,
+  });
+  private readonly railTooth = mat(0xd0d8e0, {
+    metalness: 0.92,
+    roughness: 0.18,
+    emissive: 0x283038,
     emissiveIntensity: 0.22,
   });
-  private readonly railTooth = mat(0x5a626c, {
-    metalness: 0.82,
+  private readonly opticHousing = mat(0x0a0c10, {
+    metalness: 0.75,
     roughness: 0.4,
-    emissive: 0x141820,
-    emissiveIntensity: 0.16,
-  });
-  private readonly opticHousing = mat(0x101418, {
-    metalness: 0.7,
-    roughness: 0.42,
-    emissive: 0x0c1014,
-    emissiveIntensity: 0.18,
+    emissive: 0x06080c,
+    emissiveIntensity: 0.1,
   });
   // Optic glass: hot cyan so the window reads as glass, not a gray slab.
   private readonly opticGlass = mat(0x184860, {
     metalness: 0.25,
     roughness: 0.08,
     emissive: 0x2ad0e8,
-    emissiveIntensity: 1.15,
+    emissiveIntensity: 1.25,
   });
   private readonly ironGlow = mat(0x2a1410, {
     metalness: 0.5,
     roughness: 0.48,
     emissive: 0xff5522,
-    emissiveIntensity: 0.85,
+    emissiveIntensity: 0.95,
   });
-  private readonly blade = mat(0xd0dce4, {
-    metalness: 0.92,
-    roughness: 0.18,
-    emissive: 0x14181c,
-    emissiveIntensity: 0.1,
-  });
-  private readonly bladeEdge = mat(0xe8eef2, {
+  private readonly blade = mat(0xe0e8f0, {
     metalness: 0.94,
     roughness: 0.14,
-    emissive: 0x181c20,
-    emissiveIntensity: 0.08,
+    emissive: 0x1c2228,
+    emissiveIntensity: 0.14,
+  });
+  private readonly bladeEdge = mat(0xf4f8fc, {
+    metalness: 0.96,
+    roughness: 0.1,
+    emissive: 0x202428,
+    emissiveIntensity: 0.12,
   });
   private readonly flashMat = mat(0xffcc66, {
     metalness: 0,
@@ -229,15 +229,15 @@ export class ViewModel {
     this.muzzleLight.visible = false;
     this.root.add(this.muzzleLight);
 
-    // Dedicated viewmodel fill — world dusk lights leave gun as flat gray Legos.
-    this.fillLight = new PointLight(0xffe0c0, 1.35, 1.8, 2);
+    // Specular-biased fill/rim: catch steel edges without lifting polymer to mid-gray.
+    this.fillLight = new PointLight(0xffe8d0, 1.7, 1.6, 2.2);
     this.fillLight.name = 'ViewModelFill';
-    this.fillLight.position.set(0.12, 0.08, 0.05);
+    this.fillLight.position.set(0.14, 0.1, 0.02);
     this.fillLight.castShadow = false;
     this.root.add(this.fillLight);
-    this.rimLight = new PointLight(0x88aacc, 0.55, 1.4, 2);
+    this.rimLight = new PointLight(0xa8c8e8, 0.85, 1.5, 2);
     this.rimLight.name = 'ViewModelRim';
-    this.rimLight.position.set(-0.18, 0.06, -0.1);
+    this.rimLight.position.set(-0.2, 0.08, -0.12);
     this.rimLight.castShadow = false;
     this.root.add(this.rimLight);
 
