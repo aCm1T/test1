@@ -367,7 +367,13 @@ export class WeaponSystem {
 
     let dmg = def.damage;
     if (hit.bodyPart === 'head') dmg *= def.headMult;
-    else if (hit.bodyPart === 'limbs') dmg *= def.limbMult;
+    else if (
+      hit.bodyPart === 'limbs' ||
+      hit.bodyPart === 'arm' ||
+      hit.bodyPart === 'leg'
+    ) {
+      dmg *= def.limbMult;
+    }
 
     // Mild falloff for firearms
     if (!def.melee) {

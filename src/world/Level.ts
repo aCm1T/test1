@@ -163,12 +163,14 @@ export class Level {
         cast: false,
       });
     }
-    // Secondary crosswalk on E-W approach
-    for (let i = -2; i <= 2; i++) {
-      this.box(4.2, 0.032, 0.4, 0, 0.022, i * 1.05 + (i < 0 ? -3.2 : 3.2), m, {
-        collide: false,
-        cast: false,
-      });
+    // Secondary crosswalk bars on N/S approaches
+    for (const zSign of [-1, 1]) {
+      for (let i = -2; i <= 2; i++) {
+        this.box(4.2, 0.032, 0.4, 0, 0.022, zSign * (3.4 + i * 0.55), m, {
+          collide: false,
+          cast: false,
+        });
+      }
     }
     // Stop lines
     this.box(3.5, 0.03, 0.35, 0, 0.021, 5.4, m, { collide: false, cast: false });

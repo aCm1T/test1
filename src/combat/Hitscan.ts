@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 import type { WorldCollider } from '../player/PlayerController';
 
-export type BodyPart = 'head' | 'torso' | 'limbs';
+export type BodyPart = 'head' | 'torso' | 'limbs' | 'arm' | 'leg';
 
 export interface EnemyHitbox {
   min: Vector3;
@@ -11,7 +11,7 @@ export interface EnemyHitbox {
 
 /**
  * Minimal enemy surface for hitscan combat.
- * Concrete enemy classes should implement this.
+ * Concrete enemy classes should implement this (or use `asHitscanEnemy`).
  */
 export interface HitscanEnemy {
   readonly alive: boolean;
@@ -19,8 +19,17 @@ export interface HitscanEnemy {
   getHitboxes(): EnemyHitbox[];
   /**
    * Apply damage. Return `true` if this hit killed the enemy.
+   * Damage is expected pre-scaled by the weapon system.
    */
   takeDamage(amount: number, bodyPart?: BodyPart): boolean;
+}
+
+/** Duck-typed enemy with mesh + hit() (matches enemies/Enemy). */
+export interface MeshEnemyLike {
+  readonly alive: boolean;
+  readonly mesh: { position: Vector3; rotation: { y: number } };
+  /** Apply damage; may apply its own part multipliers — pass pre-scaled + 'torso'/'generic'. */
+  hit(damage: number, part?: string): number;
 }
 
 export interface HitscanHit {
@@ -36,6 +45,61 @@ export interface HitscanHit {
 const _invDir = new Vector3();
 const _hitPoint = new Vector3();
 const _normal = new Vector3();
+
+/**
+ * Wrap a mesh-based enemy (e.g. `Enemy`) into a HitscanEnemy using
+ * approximate soldier AABBs around the mesh position.
+ */
+export function asHitscanEnemy(enemy: MeshEnemyLike): HitscanEnemy {
+  const boxes: EnemyHitbox[] = [
+    { min: new Vector3(), max: new Vector3(), bodyPart: 'head' },
+    { min: new Vector3(), max: new Vector3(), bodyPart: 'torso' },
+    { min: new Vector3(), max: new Vector3(), bodyPart: 'arm' },
+    { min: new Vector3(), max: new Vector3(), bodyPart: 'arm' },
+    { min: new Vector3(), max: new Vector3(), bodyPart: 'leg' },
+    { min: new Vector3(), max: new Vector3(), bodyPart: 'leg' },
+  ];
+
+  return {
+    get alive() {
+      return enemy.alive;
+    },
+    getHitboxes(): EnemyHitbox[] {
+      const p = enemy.mesh.position;
+      // head
+      boxes[0].min.set(p.x - 0.16, p.y + 1.66, p.z - 0.16);
+      boxes[0].max.set(p.x + 0.16, p.y + 2.05, p.z + 0.16);
+      // torso
+      boxes[1].min.set(p.x - 0.28, p.y + 0.9, p.z - 0.2);
+      boxes[1].max.set(p.x + 0.28, p.y + 1.66, p.z + 0.22);
+      // left arm
+      boxes[2].min.set(p.x - 0.52, p.y + 0.9, p.z - 0.12);
+      boxes[2].max.set(p.x - 0.28, p.y + 1.5, p.z + 0.12);
+      // right arm
+      boxes[3].min.set(p.x + 0.28, p.y + 0.9, p.z - 0.12);
+      boxes[3].max.set(p.x + 0.52, p.y + 1.5, p.z + 0.12);
+      // left leg
+      boxes[4].min.set(p.x - 0.28, p.y + 0.0, p.z - 0.14);
+      boxes[4].max.set(p.x - 0.02, p.y + 0.9, p.z + 0.14);
+      // right leg
+      boxes[5].min.set(p.x + 0.02, p.y + 0.0, p.z - 0.14);
+      boxes[5].max.set(p.x + 0.28, p.y + 0.9, p.z + 0.14);
+      return boxes;
+    },
+    takeDamage(amount: number, _bodyPart?: BodyPart): boolean {
+      if (!enemy.alive) return false;
+      // WeaponSystem already applied head/limb multipliers — pass generic
+      // so Enemy.hit does not scale damage a second time.
+      enemy.hit(amount, 'generic');
+      return !enemy.alive;
+    },
+  };
+}
+
+/** Map a list of mesh enemies to HitscanEnemy adapters. */
+export function asHitscanEnemies(enemies: MeshEnemyLike[]): HitscanEnemy[] {
+  return enemies.map(asHitscanEnemy);
+}
 
 /**
  * Ray vs AABB (slab method). Returns distance along ray or null.
@@ -92,11 +156,9 @@ export function rayAABB(
   if (tzmin > tmin) tmin = tzmin;
   if (tzmax < tmax) tmax = tzmax;
 
-  // Closest positive intersection
   const t = tmin >= 0 ? tmin : tmax >= 0 ? tmax : -1;
   if (t < 0 || t > maxDist) return null;
 
-  // Face normal from which slab we hit
   _normal.set(0, 0, 0);
   const eps = 1e-5;
   _hitPoint.copy(origin).addScaledVector(dir, t);
@@ -108,7 +170,6 @@ export function rayAABB(
   else if (Math.abs(_hitPoint.z - min.z) < eps) _normal.set(0, 0, -1);
   else if (Math.abs(_hitPoint.z - max.z) < eps) _normal.set(0, 0, 1);
   else {
-    // Fallback: push from box center
     const cx = (min.x + max.x) * 0.5;
     const cy = (min.y + max.y) * 0.5;
     const cz = (min.z + max.z) * 0.5;
@@ -128,7 +189,7 @@ export function rayAABB(
 
 /**
  * Hitscan ray test against enemies and world AABB colliders.
- * Closest hit wins. Enemy body-part hitboxes take priority at equal distance.
+ * Closest hit wins.
  */
 export function hitscan(
   origin: Vector3,
@@ -137,7 +198,8 @@ export function hitscan(
   colliders: WorldCollider[],
   maxDist: number,
 ): HitscanHit {
-  const dir = direction.lengthSq() > 0 ? direction.clone().normalize() : new Vector3(0, 0, -1);
+  const dir =
+    direction.lengthSq() > 0 ? direction.clone().normalize() : new Vector3(0, 0, -1);
 
   let bestT = maxDist;
   let bestNormal = new Vector3(0, 1, 0);
@@ -145,7 +207,6 @@ export function hitscan(
   let bestPart: BodyPart | undefined;
   let hitWorld = false;
 
-  // World colliders
   for (const c of colliders) {
     const hit = rayAABB(origin, dir, c.min, c.max, bestT);
     if (hit && hit.t < bestT) {
@@ -157,14 +218,12 @@ export function hitscan(
     }
   }
 
-  // Enemies (alive only)
   for (const enemy of enemies) {
     if (!enemy.alive) continue;
     const boxes = enemy.getHitboxes();
     for (const box of boxes) {
       const hit = rayAABB(origin, dir, box.min, box.max, bestT);
       if (hit && hit.t <= bestT) {
-        // Prefer enemy over world at same/near distance; prefer head over torso
         const prefer =
           hit.t < bestT - 1e-5 ||
           (Math.abs(hit.t - bestT) < 1e-5 &&
@@ -182,7 +241,6 @@ export function hitscan(
 
   const point = origin.clone().addScaledVector(dir, bestT);
 
-  // Miss — still return end of ray
   if (bestT >= maxDist && !bestEnemy && !hitWorld) {
     return {
       point: origin.clone().addScaledVector(dir, maxDist),
@@ -203,8 +261,8 @@ export function hitscan(
 }
 
 function bodyPartPriority(part?: BodyPart): number {
-  if (part === 'head') return 3;
-  if (part === 'torso') return 2;
-  if (part === 'limbs') return 1;
+  if (part === 'head') return 4;
+  if (part === 'torso') return 3;
+  if (part === 'arm' || part === 'leg' || part === 'limbs') return 2;
   return 0;
 }
