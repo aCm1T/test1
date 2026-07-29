@@ -23,20 +23,20 @@ interface PoseTransform {
 /** Tuned for COD-style FOV viewmodels: receiver visible on hip, tight ADS, pronounced sprint tilt. */
 const POSES: Record<WeaponId, Record<ViewPose, PoseTransform>> = {
   ar: {
-    // Larger + more centered so upper/lower/handguard read in hip FOV (not a corner stub).
-    hip: { pos: [0.1, -0.125, -0.28], rot: [0.028, 0.038, 0.018] },
+    // Centered hip: rifle fills lower-right FOV without clipping as a corner stub.
+    hip: { pos: [0.055, -0.108, -0.3], rot: [0.018, 0.022, 0.01] },
     ads: { pos: [0.0, -0.132, -0.255], rot: [0.0, 0.0, 0.0] },
     sprint: { pos: [0.26, -0.3, -0.32], rot: [0.62, 0.42, -0.52] },
     reload: { pos: [0.14, -0.26, -0.34], rot: [0.42, -0.18, 0.28] },
   },
   pistol: {
-    hip: { pos: [0.1, -0.12, -0.27], rot: [0.022, 0.032, 0.012] },
+    hip: { pos: [0.055, -0.105, -0.285], rot: [0.014, 0.02, 0.008] },
     ads: { pos: [0.0, -0.128, -0.275], rot: [0.0, 0.0, 0.0] },
     sprint: { pos: [0.24, -0.26, -0.3], rot: [0.48, 0.5, -0.35] },
     reload: { pos: [0.12, -0.24, -0.3], rot: [0.36, -0.22, 0.24] },
   },
   knife: {
-    hip: { pos: [0.16, -0.12, -0.26], rot: [0.12, -0.35, 0.3] },
+    hip: { pos: [0.12, -0.105, -0.27], rot: [0.1, -0.32, 0.26] },
     ads: { pos: [0.08, -0.1, -0.28], rot: [0.05, -0.2, 0.15] },
     sprint: { pos: [0.28, -0.22, -0.28], rot: [0.55, -0.6, 0.58] },
     reload: { pos: [0.18, -0.16, -0.3], rot: [0.2, -0.35, 0.4] },
@@ -98,50 +98,50 @@ export class ViewModel {
   private idleT = 0;
   private _reloadDuration = 1.6;
 
-  // ─── Hard value bands: charcoal polymer / dark receivers / bright steel edges ─
+  // ─── Hard value bands: near-black polymer / dark receivers / hot steel edges ─
   // Mid-gray stack reads as "gray Legos" in screenshots — keep bands far apart.
-  private readonly nitride = mat(0x161a20, {
-    metalness: 0.78,
-    roughness: 0.42,
-    emissive: 0x080a0e,
-    emissiveIntensity: 0.12,
-  });
-  private readonly nitrideWorn = mat(0x222830, {
-    metalness: 0.7,
-    roughness: 0.5,
-    emissive: 0x0a0c10,
+  private readonly nitride = mat(0x12161c, {
+    metalness: 0.8,
+    roughness: 0.4,
+    emissive: 0x06080c,
     emissiveIntensity: 0.1,
   });
-  private readonly steel = mat(0xb4bcc6, {
-    metalness: 0.9,
-    roughness: 0.2,
-    emissive: 0x2a323c,
-    emissiveIntensity: 0.28,
+  private readonly nitrideWorn = mat(0x1c222a, {
+    metalness: 0.72,
+    roughness: 0.48,
+    emissive: 0x080a0e,
+    emissiveIntensity: 0.09,
   });
-  private readonly steelBright = mat(0xe4ecf4, {
-    metalness: 0.95,
-    roughness: 0.12,
-    emissive: 0x384048,
-    emissiveIntensity: 0.32,
+  private readonly steel = mat(0xc8d0da, {
+    metalness: 0.92,
+    roughness: 0.16,
+    emissive: 0x343c46,
+    emissiveIntensity: 0.34,
   });
-  // Polymer: near-black grit — must sit well below any metal.
-  private readonly polymer = mat(0x080a0c, {
-    metalness: 0.02,
-    roughness: 0.94,
-    emissive: 0x020304,
-    emissiveIntensity: 0.06,
+  private readonly steelBright = mat(0xf0f4fa, {
+    metalness: 0.96,
+    roughness: 0.1,
+    emissive: 0x404850,
+    emissiveIntensity: 0.38,
   });
-  private readonly polymerGrit = mat(0x050608, {
+  // Polymer: crushed black grit — silhouette against steel.
+  private readonly polymer = mat(0x050608, {
     metalness: 0.015,
-    roughness: 0.97,
+    roughness: 0.96,
     emissive: 0x010203,
-    emissiveIntensity: 0.05,
+    emissiveIntensity: 0.04,
   });
-  private readonly polymerSoft = mat(0x0c1014, {
-    metalness: 0.03,
-    roughness: 0.9,
-    emissive: 0x030406,
-    emissiveIntensity: 0.06,
+  private readonly polymerGrit = mat(0x030405, {
+    metalness: 0.01,
+    roughness: 0.98,
+    emissive: 0x010101,
+    emissiveIntensity: 0.035,
+  });
+  private readonly polymerSoft = mat(0x080a0e, {
+    metalness: 0.02,
+    roughness: 0.92,
+    emissive: 0x020304,
+    emissiveIntensity: 0.045,
   });
   // FDE / tan accents break the gray mass (magwell lip, stock cheek, grip panels).
   private readonly fde = mat(0xc49860, {
@@ -150,24 +150,24 @@ export class ViewModel {
     emissive: 0x3a2410,
     emissiveIntensity: 0.28,
   });
-  private readonly railTooth = mat(0xd0d8e0, {
-    metalness: 0.92,
-    roughness: 0.18,
-    emissive: 0x283038,
-    emissiveIntensity: 0.22,
+  private readonly railTooth = mat(0xe0e8f0, {
+    metalness: 0.94,
+    roughness: 0.14,
+    emissive: 0x303840,
+    emissiveIntensity: 0.28,
   });
-  private readonly opticHousing = mat(0x0a0c10, {
-    metalness: 0.75,
-    roughness: 0.4,
-    emissive: 0x06080c,
-    emissiveIntensity: 0.1,
+  private readonly opticHousing = mat(0x06080c, {
+    metalness: 0.78,
+    roughness: 0.38,
+    emissive: 0x040608,
+    emissiveIntensity: 0.08,
   });
   // Optic glass: hot cyan so the window reads as glass, not a gray slab.
-  private readonly opticGlass = mat(0x184860, {
-    metalness: 0.25,
-    roughness: 0.08,
-    emissive: 0x2ad0e8,
-    emissiveIntensity: 1.25,
+  private readonly opticGlass = mat(0x1a5068, {
+    metalness: 0.22,
+    roughness: 0.06,
+    emissive: 0x30e0f4,
+    emissiveIntensity: 1.45,
   });
   private readonly ironGlow = mat(0x2a1410, {
     metalness: 0.5,
@@ -392,13 +392,13 @@ export class ViewModel {
     const swayY = Math.cos(this.idleT * 1.1) * swayAmp * 0.85;
     const swayRoll = Math.sin(this.idleT * 0.9) * swayAmp * 0.6;
 
-    // Kick recovery — fast initial settle, lingering micro-shake
-    this.kickRot.x = MathUtils.damp(this.kickRot.x, 0, 13, clampedDt);
-    this.kickRot.y = MathUtils.damp(this.kickRot.y, 0, 15, clampedDt);
-    this.kickRot.z = MathUtils.damp(this.kickRot.z, 0, 15, clampedDt);
-    this.kickPos.x = MathUtils.damp(this.kickPos.x, 0, 15, clampedDt);
-    this.kickPos.y = MathUtils.damp(this.kickPos.y, 0, 15, clampedDt);
-    this.kickPos.z = MathUtils.damp(this.kickPos.z, 0, 17, clampedDt);
+    // Kick recovery — snappy settle with brief residual
+    this.kickRot.x = MathUtils.damp(this.kickRot.x, 0, 18, clampedDt);
+    this.kickRot.y = MathUtils.damp(this.kickRot.y, 0, 20, clampedDt);
+    this.kickRot.z = MathUtils.damp(this.kickRot.z, 0, 20, clampedDt);
+    this.kickPos.x = MathUtils.damp(this.kickPos.x, 0, 20, clampedDt);
+    this.kickPos.y = MathUtils.damp(this.kickPos.y, 0, 20, clampedDt);
+    this.kickPos.z = MathUtils.damp(this.kickPos.z, 0, 22, clampedDt);
 
     const w = this.weapons[this.active];
     w.rotation.x += this.kickRot.x + swayY * 2;
@@ -584,22 +584,22 @@ export class ViewModel {
     g.add(this.mesh(new BoxGeometry(0.052, 0.018, 0.34), this.steel, 0, 0.072, -0.08));
     this.addPicatinny(g, -0.22, 12, 0.086);
 
-    // Barrel (stepped)
-    g.add(this.cyl(this.steel, 0.011, 0.013, 0.22, 0, 0.028, -0.36, 12));
-    g.add(this.cyl(this.nitrideWorn, 0.014, 0.015, 0.08, 0, 0.028, -0.5, 10));
+    // Barrel (stepped, slightly thicker silhouette)
+    g.add(this.cyl(this.steel, 0.013, 0.015, 0.22, 0, 0.028, -0.36, 12));
+    g.add(this.cyl(this.nitrideWorn, 0.016, 0.017, 0.08, 0, 0.028, -0.5, 10));
 
     // Gas block
     g.add(this.mesh(new BoxGeometry(0.032, 0.038, 0.036), this.nitride, 0, 0.05, -0.46));
     g.add(this.cyl(this.steel, 0.006, 0.006, 0.05, 0, 0.072, -0.42, 6));
 
     // Barrel shroud / suppressor-style muzzle device
-    g.add(this.cyl(this.nitride, 0.02, 0.018, 0.07, 0, 0.028, -0.575, 12));
+    g.add(this.cyl(this.nitride, 0.022, 0.02, 0.07, 0, 0.028, -0.575, 12));
     // Muzzle brake ports
     for (let i = 0; i < 3; i++) {
       g.add(this.mesh(new BoxGeometry(0.028, 0.008, 0.01), this.steelBright, 0, 0.04, -0.555 - i * 0.016));
     }
     // Flash hider tip ring
-    g.add(this.cyl(this.steelBright, 0.016, 0.017, 0.018, 0, 0.028, -0.615, 10));
+    g.add(this.cyl(this.steelBright, 0.018, 0.019, 0.018, 0, 0.028, -0.615, 10));
 
     // Handguard body (M-LOK style)
     g.add(this.mesh(new BoxGeometry(0.062, 0.058, 0.24), this.polymer, 0, 0.012, -0.28));
@@ -673,16 +673,16 @@ export class ViewModel {
     g.add(this.cyl(this.steelBright, 0.006, 0.006, 0.02, 0.032, -0.02, 0.02, 6));
 
     // Holosight optic
-    g.add(this.mesh(new BoxGeometry(0.042, 0.02, 0.07), this.opticHousing, 0, 0.1, -0.02));
+    g.add(this.mesh(new BoxGeometry(0.044, 0.022, 0.072), this.opticHousing, 0, 0.1, -0.02));
     // Optic hood / window frame
-    g.add(this.mesh(new BoxGeometry(0.04, 0.038, 0.012), this.opticHousing, 0, 0.125, -0.048));
-    g.add(this.mesh(new BoxGeometry(0.04, 0.038, 0.012), this.opticHousing, 0, 0.125, 0.012));
-    // Glass panes — hot cyan read
-    g.add(this.mesh(new BoxGeometry(0.032, 0.03, 0.008), this.opticGlass, 0, 0.125, -0.052));
-    g.add(this.mesh(new BoxGeometry(0.032, 0.03, 0.008), this.opticGlass, 0, 0.125, 0.016));
+    g.add(this.mesh(new BoxGeometry(0.042, 0.042, 0.014), this.opticHousing, 0, 0.128, -0.048));
+    g.add(this.mesh(new BoxGeometry(0.042, 0.042, 0.014), this.opticHousing, 0, 0.128, 0.012));
+    // Glass panes — thicker + hotter cyan so the window reads at hip FOV
+    g.add(this.mesh(new BoxGeometry(0.036, 0.034, 0.01), this.opticGlass, 0, 0.128, -0.054));
+    g.add(this.mesh(new BoxGeometry(0.036, 0.034, 0.01), this.opticGlass, 0, 0.128, 0.018));
     // Side optic walls
-    g.add(this.mesh(new BoxGeometry(0.006, 0.038, 0.055), this.opticHousing, 0.018, 0.125, -0.018));
-    g.add(this.mesh(new BoxGeometry(0.006, 0.038, 0.055), this.opticHousing, -0.018, 0.125, -0.018));
+    g.add(this.mesh(new BoxGeometry(0.007, 0.042, 0.058), this.opticHousing, 0.02, 0.128, -0.018));
+    g.add(this.mesh(new BoxGeometry(0.007, 0.042, 0.058), this.opticHousing, -0.02, 0.128, -0.018));
     // Brightness dial + battery cap (orange accent)
     g.add(this.cyl(this.steelBright, 0.008, 0.008, 0.012, 0.026, 0.11, -0.02, 8));
     g.add(this.mesh(new BoxGeometry(0.012, 0.012, 0.012), this.ironGlow, -0.022, 0.11, 0.0));
@@ -756,9 +756,9 @@ export class ViewModel {
       g.add(this.mesh(new BoxGeometry(0.03, 0.006, 0.01), this.railTooth, 0, -0.016, -0.08 - i * 0.016));
     }
 
-    // Barrel + bushing
-    g.add(this.cyl(this.steel, 0.009, 0.01, 0.13, 0, 0.04, -0.155, 10));
-    g.add(this.cyl(this.nitride, 0.013, 0.012, 0.022, 0, 0.04, -0.235, 10));
+    // Barrel + bushing (slightly thicker silhouette)
+    g.add(this.cyl(this.steel, 0.011, 0.012, 0.13, 0, 0.04, -0.155, 10));
+    g.add(this.cyl(this.nitride, 0.015, 0.014, 0.022, 0, 0.04, -0.235, 10));
     // Recoil spring guide tip
     g.add(this.cyl(this.steelBright, 0.005, 0.005, 0.04, 0, 0.022, -0.14, 6));
 
@@ -805,7 +805,7 @@ export class ViewModel {
     g.add(this.mesh(new BoxGeometry(0.014, 0.018, 0.016), this.nitrideWorn, 0, 0.055, 0.055));
 
     // Beveled muzzle crown ring
-    g.add(this.cyl(this.steelBright, 0.011, 0.014, 0.01, 0, 0.04, -0.255, 10));
+    g.add(this.cyl(this.steelBright, 0.013, 0.016, 0.01, 0, 0.04, -0.255, 10));
 
     return g;
   }

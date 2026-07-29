@@ -100,18 +100,18 @@ export class Enemy {
     this.patrolSeed = Math.random() * 1000;
 
     this.bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x6a7850,
-      roughness: 0.82,
+      color: 0x7a8a58,
+      roughness: 0.8,
       metalness: 0.04,
-      emissive: 0x1a2210,
-      emissiveIntensity: 0.18,
+      emissive: 0x1c2812,
+      emissiveIntensity: 0.2,
     });
     this.gearMat = new THREE.MeshStandardMaterial({
-      color: 0x3a4048,
-      roughness: 0.62,
-      metalness: 0.28,
-      emissive: 0x101418,
-      emissiveIntensity: 0.12,
+      color: 0x1e242c,
+      roughness: 0.55,
+      metalness: 0.35,
+      emissive: 0x080c10,
+      emissiveIntensity: 0.1,
     });
     this.skinMat = new THREE.MeshStandardMaterial({
       color: 0xc4a07a,
@@ -124,6 +124,7 @@ export class Enemy {
 
     this.mesh = new THREE.Group();
     this.mesh.name = 'EnemySoldier';
+    this.mesh.castShadow = true;
     this.parts = this.buildMesh();
     this.tagParts();
 
@@ -202,8 +203,8 @@ export class Enemy {
     if (this.hitFlash > 0) {
       this.hitFlash -= dt;
       const flash = this.hitFlash > 0;
-      this.bodyMat.emissive.setHex(flash ? 0x441010 : 0x000000);
-      this.bodyMat.emissiveIntensity = flash ? 0.6 : 0;
+      this.bodyMat.emissive.setHex(flash ? 0x441010 : 0x1c2812);
+      this.bodyMat.emissiveIntensity = flash ? 0.6 : 0.2;
     }
 
     const toPlayer = this._tmp.copy(playerPos).sub(this.mesh.position);
@@ -346,9 +347,9 @@ export class Enemy {
     torso.receiveShadow = true;
     g.add(torso);
 
-    // Chest rig / plate — darker contrast vs olive body
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.12), this.gearMat);
-    plate.position.set(0, 1.35, 0.18);
+    // Chest plate / vest — near-black vs olive body for clear silhouette
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.48, 0.14), this.gearMat);
+    plate.position.set(0, 1.32, 0.18);
     plate.castShadow = true;
     plate.receiveShadow = true;
     g.add(plate);
@@ -369,31 +370,33 @@ export class Enemy {
     head.receiveShadow = true;
     g.add(head);
 
-    // Helmet — slightly lighter than plate so head reads at dusk
+    // Helmet — taller + lighter olive so head reads against dusk sky / dark vest
     const helmMat = new THREE.MeshStandardMaterial({
-      color: 0x4a5540,
-      roughness: 0.7,
-      metalness: 0.15,
-      emissive: 0x152010,
-      emissiveIntensity: 0.15,
+      color: 0x5a6848,
+      roughness: 0.65,
+      metalness: 0.18,
+      emissive: 0x1a2814,
+      emissiveIntensity: 0.22,
     });
     this.materials.push(helmMat);
-    const helmet = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 0.34), helmMat);
-    helmet.position.set(0, 1.96, 0.02);
+    const helmet = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.36), helmMat);
+    helmet.position.set(0, 2.0, 0.02);
     helmet.castShadow = true;
+    helmet.receiveShadow = true;
     g.add(helmet);
 
-    // Visor strip — tiny cool emissive so heads pop vs skyline
+    // Visor strip — cool emissive so heads pop vs skyline
     const visorMat = new THREE.MeshStandardMaterial({
-      color: 0x1a2228,
-      roughness: 0.25,
-      metalness: 0.6,
-      emissive: 0x203040,
-      emissiveIntensity: 0.35,
+      color: 0x141c24,
+      roughness: 0.2,
+      metalness: 0.7,
+      emissive: 0x3a90b8,
+      emissiveIntensity: 0.55,
     });
     this.materials.push(visorMat);
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.08), visorMat);
-    visor.position.set(0, 1.9, 0.16);
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.07, 0.09), visorMat);
+    visor.position.set(0, 1.92, 0.17);
+    visor.castShadow = true;
     g.add(visor);
 
     const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.6, 0.16), this.bodyMat);
@@ -517,10 +520,14 @@ export class Enemy {
     if (this.fireCooldown > 0 || !this.onShoot) return;
 
     const origin = this.getAimPoint(this._tmp);
-    const dir = this._tmp2.copy(playerPos).add(new THREE.Vector3(0, 1.4, 0)).sub(origin).normalize();
+    const dir = this._tmp2.copy(playerPos).add(new THREE.Vector3(0, 1.4, 0)).sub(origin);
+    const dist = dir.length();
+    dir.normalize();
 
-    // Accuracy cone
-    const spread = (1 - this.accuracy) * 0.12;
+    // Closer = tighter cone (more threatening in mid-range gunfights)
+    const closeBonus = dist < 14 ? THREE.MathUtils.clamp((14 - dist) / 14, 0, 1) * 0.22 : 0;
+    const effectiveAcc = Math.min(0.96, this.accuracy + closeBonus);
+    const spread = (1 - effectiveAcc) * 0.12;
     dir.x += (Math.random() - 0.5) * spread;
     dir.y += (Math.random() - 0.5) * spread * 0.6;
     dir.z += (Math.random() - 0.5) * spread;

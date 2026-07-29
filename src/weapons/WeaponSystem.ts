@@ -1,4 +1,12 @@
-import { MathUtils, Scene, Vector3, type PerspectiveCamera } from 'three';
+import {
+  BufferGeometry,
+  Line,
+  LineBasicMaterial,
+  MathUtils,
+  Scene,
+  Vector3,
+  type PerspectiveCamera,
+} from 'three';
 import {
   hitscan,
   type BodyPart,
@@ -8,6 +16,11 @@ import {
 import type { WorldCollider } from '../player/PlayerController';
 import type { PlayerController } from '../player/PlayerController';
 import { ViewModel, type WeaponId } from './ViewModel';
+
+interface TracerLine {
+  line: Line;
+  life: number;
+}
 
 export type { WeaponId };
 
@@ -65,7 +78,7 @@ const WEAPON_DEFS: Record<WeaponId, WeaponDef> = {
     automatic: true,
     recoilPitch: 0.018,
     recoilYaw: 0.009,
-    adsSpread: 0.004,
+    adsSpread: 0.0026,
     hipSpread: 0.022,
   },
   pistol: {
@@ -82,7 +95,7 @@ const WEAPON_DEFS: Record<WeaponId, WeaponDef> = {
     automatic: false,
     recoilPitch: 0.028,
     recoilYaw: 0.014,
-    adsSpread: 0.006,
+    adsSpread: 0.004,
     hipSpread: 0.018,
   },
   knife: {
@@ -144,10 +157,13 @@ export class WeaponSystem {
 
   private readonly keys = new Set<string>();
   private disposeFns: Array<() => void> = [];
+  private readonly tracers: TracerLine[] = [];
+  private scene: Scene | null = null;
 
   private readonly origin = new Vector3();
   private readonly direction = new Vector3();
   private readonly _forward = new Vector3();
+  private readonly _tracerEnd = new Vector3();
 
   constructor(options: WeaponSystemOptions) {
     this.player = options.player;
@@ -230,11 +246,12 @@ export class WeaponSystem {
   /**
    * Per-frame update.
    * @param dt seconds
-   * @param _scene scene (reserved for tracers/decals hooks)
+   * @param scene scene (tracers attach here)
    * @param enemies hitscan targets
    */
-  update(dt: number, _scene: Scene, enemies: HitscanEnemy[]): void {
+  update(dt: number, scene: Scene, enemies: HitscanEnemy[]): void {
     const clampedDt = Math.min(dt, 0.05);
+    this.scene = scene;
 
     // ADS from RMB (player also tracks MouseRight; we mirror for independence)
     const wantAds =
@@ -303,10 +320,11 @@ export class WeaponSystem {
       this.startReload();
     }
 
-    // Recoil punch recovery (visual residual)
-    this.recoilPunchPitch = MathUtils.damp(this.recoilPunchPitch, 0, 14, clampedDt);
-    this.recoilPunchYaw = MathUtils.damp(this.recoilPunchYaw, 0, 14, clampedDt);
+    // Recoil punch recovery — snappy settle back to iron sights
+    this.recoilPunchPitch = MathUtils.damp(this.recoilPunchPitch, 0, 22, clampedDt);
+    this.recoilPunchYaw = MathUtils.damp(this.recoilPunchYaw, 0, 22, clampedDt);
 
+    this.updateTracers(clampedDt);
     this.viewModel.update(clampedDt);
   }
 
@@ -336,6 +354,8 @@ export class WeaponSystem {
 
     const hit = hitscan(this.origin, this.direction, enemies, this.colliders, def.range);
 
+    this.spawnTracer(this.origin, this.direction, hit?.distance ?? Math.min(def.range, 28));
+
     // Recoil — punch player look angles (survives CameraFeel re-base)
     const adsMul = this.ads ? 0.55 : 1;
     const pitchKick = def.recoilPitch * adsMul * (0.85 + Math.random() * 0.3);
@@ -348,6 +368,48 @@ export class WeaponSystem {
 
     this.onFire?.(this.active, hit);
     this.applyHitDamage(hit, def);
+  }
+
+  /** Short tracer streak (~50ms). Geometry/material disposed on expiry. */
+  private spawnTracer(origin: Vector3, direction: Vector3, length: number): void {
+    if (!this.scene) return;
+    const len = MathUtils.clamp(length * 0.45, 1.2, 18);
+    this._tracerEnd.copy(origin).addScaledVector(direction, len);
+    const geo = new BufferGeometry().setFromPoints([origin.clone(), this._tracerEnd.clone()]);
+    const mat = new LineBasicMaterial({
+      color: 0xffd088,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+    });
+    const line = new Line(geo, mat);
+    line.frustumCulled = false;
+    this.scene.add(line);
+    this.tracers.push({ line, life: 0.05 });
+  }
+
+  private updateTracers(dt: number): void {
+    for (let i = this.tracers.length - 1; i >= 0; i--) {
+      const t = this.tracers[i];
+      t.life -= dt;
+      const mat = t.line.material as LineBasicMaterial;
+      mat.opacity = Math.max(0, (t.life / 0.05) * 0.82);
+      if (t.life <= 0) {
+        this.disposeTracer(t);
+        this.tracers.splice(i, 1);
+      }
+    }
+  }
+
+  private disposeTracer(t: TracerLine): void {
+    t.line.removeFromParent();
+    t.line.geometry.dispose();
+    const mat = t.line.material;
+    if (Array.isArray(mat)) {
+      for (const m of mat) m.dispose();
+    } else {
+      mat.dispose();
+    }
   }
 
   private fireMelee(enemies: HitscanEnemy[], def: WeaponDef): void {
@@ -461,6 +523,8 @@ export class WeaponSystem {
   dispose(): void {
     for (const fn of this.disposeFns) fn();
     this.disposeFns.length = 0;
+    for (const t of this.tracers) this.disposeTracer(t);
+    this.tracers.length = 0;
     this.viewModel.dispose();
   }
 }

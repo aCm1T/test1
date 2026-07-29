@@ -66,9 +66,9 @@ export function asHitscanEnemy(enemy: MeshEnemyLike): HitscanEnemy {
     },
     getHitboxes(): EnemyHitbox[] {
       const p = enemy.mesh.position;
-      // head
-      boxes[0].min.set(p.x - 0.16, p.y + 1.66, p.z - 0.16);
-      boxes[0].max.set(p.x + 0.16, p.y + 2.05, p.z + 0.16);
+      // head (taller helmet silhouette)
+      boxes[0].min.set(p.x - 0.17, p.y + 1.66, p.z - 0.17);
+      boxes[0].max.set(p.x + 0.17, p.y + 2.14, p.z + 0.17);
       // torso
       boxes[1].min.set(p.x - 0.28, p.y + 0.9, p.z - 0.2);
       boxes[1].max.set(p.x + 0.28, p.y + 1.66, p.z + 0.22);

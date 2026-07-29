@@ -181,16 +181,29 @@ export class EnemyManager {
   // ── spawn logic ──────────────────────────────────────────────────────
 
   private spawnInitial(): void {
+    // Player at origin looks yaw=PI → +Z. Seed two hostiles in the opening cone.
+    const opening: THREE.Vector3[] = [
+      new THREE.Vector3(-3.5, 0, 9),
+      new THREE.Vector3(4.0, 0, 11),
+    ];
+    for (const p of opening) {
+      this.spawnAt(p);
+    }
+
     const spawns = this.level.enemySpawns;
-    const count = Math.min(this.maxAlive, Math.max(4, Math.floor(spawns.length * 0.6)));
-    // Always seed the first two spawn slots (near-player readability), then shuffle the rest.
-    const indices: number[] = [];
-    if (spawns.length > 0) indices.push(0);
-    if (spawns.length > 1) indices.push(1);
-    const rest = shuffledIndices(spawns.length).filter((i) => i > 1);
-    for (const i of rest) indices.push(i);
-    for (let i = 0; i < count; i++) {
-      const p = spawns[indices[i % indices.length]];
+    const target = Math.min(this.maxAlive, Math.max(4, Math.floor(spawns.length * 0.6)));
+    const indices = shuffledIndices(spawns.length);
+    for (let i = 0; i < indices.length && this.enemies.length < target; i++) {
+      const p = spawns[indices[i]];
+      // Skip near-duplicates of the opening pair
+      let tooClose = false;
+      for (const o of opening) {
+        if (p.distanceTo(o) < 3.5) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
       this.spawnAt(p);
     }
     this.waveIndex = 1;
