@@ -183,9 +183,14 @@ export class EnemyManager {
   private spawnInitial(): void {
     const spawns = this.level.enemySpawns;
     const count = Math.min(this.maxAlive, Math.max(4, Math.floor(spawns.length * 0.6)));
-    const indices = shuffledIndices(spawns.length);
+    // Always seed the first two spawn slots (near-player readability), then shuffle the rest.
+    const indices: number[] = [];
+    if (spawns.length > 0) indices.push(0);
+    if (spawns.length > 1) indices.push(1);
+    const rest = shuffledIndices(spawns.length).filter((i) => i > 1);
+    for (const i of rest) indices.push(i);
     for (let i = 0; i < count; i++) {
-      const p = spawns[indices[i % spawns.length]];
+      const p = spawns[indices[i % indices.length]];
       this.spawnAt(p);
     }
     this.waveIndex = 1;

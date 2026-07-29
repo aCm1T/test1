@@ -21,3 +21,5 @@ export {
   GameClock,
   type GameClockOptions,
 } from './Clock';
+
+export { setupEnvironment } from './Environment';

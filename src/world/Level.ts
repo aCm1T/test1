@@ -14,7 +14,7 @@ const HALF = ARENA * 0.5;
 export class Level {
   readonly group = new THREE.Group();
   readonly colliders: AABB[] = [];
-  readonly playerSpawn = new THREE.Vector3(0, 0, 28);
+  readonly playerSpawn = new THREE.Vector3(0, 0, 12);
   readonly enemySpawns: THREE.Vector3[] = [];
   readonly coverNodes: THREE.Vector3[] = [];
 
@@ -114,51 +114,91 @@ export class Level {
     const concrete = this.kit.matConcrete;
     const dirt = this.kit.matDirt;
 
-    // Main asphalt plane
-    const ground = this.box(ARENA, 0.2, ARENA, 0, -0.1, 0, asphalt, {
+    // Thick asphalt slab (top face at y=0) — must receive shadows or dusk sun
+    // crushes midtones into a cool-blue void against the sky nadir.
+    const ground = this.box(ARENA, 0.45, ARENA, 0, -0.225, 0, asphalt, {
       collide: true,
       cast: false,
+      receive: true,
     });
     ground.name = 'GroundAsphalt';
+    ground.receiveShadow = true;
+    // Extra large planar deck so sky nadir never peeks at map edges / look-down.
+    const deckGeo = new THREE.PlaneGeometry(ARENA * 2.2, ARENA * 2.2);
+    this.disposables.push(deckGeo);
+    const deck = new THREE.Mesh(deckGeo, asphalt);
+    deck.rotation.x = -Math.PI * 0.5;
+    deck.position.set(0, 0.02, 0);
+    deck.receiveShadow = true;
+    deck.castShadow = false;
+    deck.name = 'GroundAsphaltDeck';
+    this.group.add(deck);
+    // Outer skirt — darker warm asphalt so horizon doesn't flash sky-blue.
+    const skirtGeo = new THREE.PlaneGeometry(ARENA * 4.5, ARENA * 4.5);
+    this.disposables.push(skirtGeo);
+    const skirtMat = asphalt.clone();
+    skirtMat.color = new THREE.Color(0xe8dcc8);
+    skirtMat.emissive = new THREE.Color(0x18140e);
+    skirtMat.emissiveIntensity = 0.08;
+    const skirt = new THREE.Mesh(skirtGeo, skirtMat);
+    skirt.rotation.x = -Math.PI * 0.5;
+    skirt.position.set(0, -0.02, 0);
+    skirt.receiveShadow = true;
+    skirt.castShadow = false;
+    skirt.name = 'GroundAsphaltSkirt';
+    this.group.add(skirt);
 
     // Sidewalk strips along N-S street (X corridors)
-    const swH = 0.18;
-    this.box(3.2, swH, 52, -7.6, swH * 0.5, 0, concrete, { cast: false });
-    this.box(3.2, swH, 52, 7.6, swH * 0.5, 0, concrete, { cast: false });
+    const swH = 0.2;
+    this.box(3.2, swH, 52, -7.6, swH * 0.5, 0, concrete, { cast: false, receive: true });
+    this.box(3.2, swH, 52, 7.6, swH * 0.5, 0, concrete, { cast: false, receive: true });
 
     // E-W street sidewalks
-    this.box(40, swH, 3.2, 0, swH * 0.5, -7.6, concrete, { cast: false });
-    this.box(40, swH, 3.2, 0, swH * 0.5, 7.6, concrete, { cast: false });
+    this.box(40, swH, 3.2, 0, swH * 0.5, -7.6, concrete, { cast: false, receive: true });
+    this.box(40, swH, 3.2, 0, swH * 0.5, 7.6, concrete, { cast: false, receive: true });
 
     // Corner plaza pads at intersection
-    this.box(3.5, swH, 3.5, -7.6, swH * 0.5, -7.6, concrete, { cast: false });
-    this.box(3.5, swH, 3.5, 7.6, swH * 0.5, -7.6, concrete, { cast: false });
-    this.box(3.5, swH, 3.5, -7.6, swH * 0.5, 7.6, concrete, { cast: false });
-    this.box(3.5, swH, 3.5, 7.6, swH * 0.5, 7.6, concrete, { cast: false });
+    this.box(3.5, swH, 3.5, -7.6, swH * 0.5, -7.6, concrete, { cast: false, receive: true });
+    this.box(3.5, swH, 3.5, 7.6, swH * 0.5, -7.6, concrete, { cast: false, receive: true });
+    this.box(3.5, swH, 3.5, -7.6, swH * 0.5, 7.6, concrete, { cast: false, receive: true });
+    this.box(3.5, swH, 3.5, 7.6, swH * 0.5, 7.6, concrete, { cast: false, receive: true });
 
-    // Dirt patches in alleys / broken curb
-    this.box(4, 0.12, 8, -18, 0.06, 18, dirt, { collide: false, cast: false });
-    this.box(6, 0.12, 4, 20, 0.06, -16, dirt, { collide: false, cast: false });
-    this.box(5, 0.12, 5, -22, 0.06, -20, dirt, { collide: false, cast: false });
-    this.box(3.5, 0.1, 3.5, 16, 0.05, 16, dirt, { collide: false, cast: false });
-    this.box(4, 0.1, 3, -8, 0.05, -22, dirt, { collide: false, cast: false });
+    // Dirt patches in alleys / broken curb — sit flush on asphalt deck
+    this.box(4, 0.1, 8, -18, 0.06, 18, dirt, { collide: false, cast: false, receive: true });
+    this.box(6, 0.1, 4, 20, 0.06, -16, dirt, { collide: false, cast: false, receive: true });
+    this.box(5, 0.1, 5, -22, 0.06, -20, dirt, { collide: false, cast: false, receive: true });
+    this.box(3.5, 0.08, 3.5, 16, 0.05, 16, dirt, { collide: false, cast: false, receive: true });
+    this.box(4, 0.08, 3, -8, 0.05, -22, dirt, { collide: false, cast: false, receive: true });
+  }
+
+  /** Soft dark disc so props / wrecks read as grounded (cheap contact AO). */
+  private contactShadow(x: number, z: number, sx: number, sz: number, _opacity = 0.38): void {
+    const geo = new THREE.PlaneGeometry(sx, sz);
+    this.disposables.push(geo);
+    const m = new THREE.Mesh(geo, this.kit.matContactShadow);
+    m.rotation.x = -Math.PI * 0.5;
+    m.position.set(x, 0.025, z);
+    m.receiveShadow = false;
+    m.castShadow = false;
+    m.renderOrder = 1;
+    this.group.add(m);
   }
 
   private buildRoadMarkings(): void {
     const m = this.kit.matRoadMark;
     // Center dashed line N-S — skip intersection for clean crosswalk
-    for (let z = -24; z <= 24; z += 4) {
+    for (let z = -24; z <= 24; z += 3.5) {
       if (Math.abs(z) < 4) continue;
-      this.box(0.28, 0.03, 1.7, 0, 0.02, z, m, { collide: false, cast: false });
+      this.box(0.32, 0.04, 1.9, 0, 0.035, z, m, { collide: false, cast: false });
     }
     // Center dashed line E-W
-    for (let x = -20; x <= 20; x += 4) {
+    for (let x = -20; x <= 20; x += 3.5) {
       if (Math.abs(x) < 5) continue;
-      this.box(1.7, 0.03, 0.28, x, 0.02, 0, m, { collide: false, cast: false });
+      this.box(1.9, 0.04, 0.32, x, 0.035, 0, m, { collide: false, cast: false });
     }
-    // Crosswalk at intersection (N-S bars)
+    // Crosswalk at intersection (N-S bars) — thick + emissive for spawn screenshot read
     for (let i = -3; i <= 3; i++) {
-      this.box(0.48, 0.035, 4.6, i * 1.1, 0.025, 0, m, {
+      this.box(0.55, 0.045, 5.0, i * 1.15, 0.038, 0, m, {
         collide: false,
         cast: false,
       });
@@ -166,15 +206,22 @@ export class Level {
     // Secondary crosswalk bars on N/S approaches
     for (const zSign of [-1, 1]) {
       for (let i = -2; i <= 2; i++) {
-        this.box(4.2, 0.032, 0.4, 0, 0.022, zSign * (3.4 + i * 0.55), m, {
+        this.box(4.5, 0.04, 0.45, 0, 0.036, zSign * (3.4 + i * 0.55), m, {
           collide: false,
           cast: false,
         });
       }
     }
     // Stop lines
-    this.box(3.5, 0.03, 0.35, 0, 0.021, 5.4, m, { collide: false, cast: false });
-    this.box(3.5, 0.03, 0.35, 0, 0.021, -5.4, m, { collide: false, cast: false });
+    this.box(3.8, 0.04, 0.4, 0, 0.034, 5.4, m, { collide: false, cast: false });
+    this.box(3.8, 0.04, 0.4, 0, 0.034, -5.4, m, { collide: false, cast: false });
+    // Spawn-facing lane chevrons (player looks -Z from z=12)
+    for (let i = 0; i < 4; i++) {
+      this.box(0.9, 0.042, 0.55, 0, 0.037, 9.5 - i * 1.4, m, {
+        collide: false,
+        cast: false,
+      });
+    }
   }
 
   private buildCurbsAndStreetFurniture(): void {
@@ -425,42 +472,100 @@ export class Level {
   private addWindowRow(
     cx: number,
     cz: number,
-    _w: number,
+    w: number,
     d: number,
     floors: number,
     floorH: number,
     wall: number,
   ): void {
     const glass = this.kit.matGlassBroken;
+    const lit = this.kit.matWindowLit;
+    const litCool = this.kit.matWindowLitCool;
     const trim = this.kit.matTrim;
+    const hw = w * 0.5;
+    const hd = d * 0.5;
+
+    const placeWindow = (
+      wx: number,
+      wy: number,
+      wz: number,
+      ww: number,
+      wh: number,
+      wd: number,
+      litMat: THREE.Material,
+      skipLit: boolean,
+    ) => {
+      // Emissive pane behind glass — dusk facade readability
+      if (!skipLit) {
+        this.box(ww * 0.92, wh * 0.92, Math.max(0.04, wd * 0.6), wx, wy, wz, litMat, {
+          collide: false,
+          cast: false,
+          receive: false,
+        });
+      }
+      this.box(ww, wh, wd, wx, wy, wz, glass, {
+        collide: false,
+        cast: false,
+        receive: false,
+      });
+      // Frame
+      const ft = 0.08;
+      if (wd >= ww) {
+        // Facing ±X (vertical wall along Z)
+        this.box(wd + 0.04, ft, ww + 0.12, wx, wy + wh * 0.5 + 0.02, wz, trim, {
+          collide: false,
+          cast: false,
+        });
+        this.box(wd + 0.04, ft, ww + 0.12, wx, wy - wh * 0.5 - 0.02, wz, trim, {
+          collide: false,
+          cast: false,
+        });
+      } else {
+        this.box(ww + 0.12, ft, wd + 0.04, wx, wy + wh * 0.5 + 0.02, wz, trim, {
+          collide: false,
+          cast: false,
+        });
+        this.box(ww + 0.12, ft, wd + 0.04, wx, wy - wh * 0.5 - 0.02, wz, trim, {
+          collide: false,
+          cast: false,
+        });
+        this.box(ft, wh + 0.08, wd + 0.04, wx - ww * 0.5, wy, wz, trim, {
+          collide: false,
+          cast: false,
+        });
+        this.box(ft, wh + 0.08, wd + 0.04, wx + ww * 0.5, wy, wz, trim, {
+          collide: false,
+          cast: false,
+        });
+      }
+    };
+
     for (let f = 0; f < floors; f++) {
       const y = f * floorH + floorH * 0.55;
-      for (let i = -1; i <= 1; i++) {
-        if (i === 0 && f === 0) continue; // door clearance on south
-        const wx = cx + i * 2.4;
-        const zs = cz + d * 0.5 - wall * 0.2;
-        this.box(1.15, 1.25, 0.08, wx, y, zs, glass, {
-          collide: false,
-          cast: false,
-        });
-        // Frame
-        this.box(1.3, 0.08, 0.1, wx, y + 0.65, zs, trim, { collide: false, cast: false });
-        this.box(1.3, 0.08, 0.1, wx, y - 0.65, zs, trim, { collide: false, cast: false });
-        this.box(0.08, 1.3, 0.1, wx - 0.6, y, zs, trim, { collide: false, cast: false });
-        this.box(0.08, 1.3, 0.1, wx + 0.6, y, zs, trim, { collide: false, cast: false });
-        this.box(0.06, 1.25, 0.06, wx, y, zs + 0.02, trim, { collide: false, cast: false });
+      const warm = (f + Math.round(cx + cz)) % 3 !== 0;
+      const pane = warm ? lit : litCool;
+
+      // South + north faces — denser window columns for facade color
+      const xCount = Math.max(2, Math.min(4, Math.floor(w / 3.2)));
+      for (let i = -xCount; i <= xCount; i++) {
+        if (i === 0 && f === 0) continue; // door clearance
+        const wx = cx + i * Math.min(2.1, w / (xCount * 2 + 1));
+        const zs = cz + hd - wall * 0.15;
+        const zn = cz - hd + wall * 0.15;
+        const skipLitS = (i + f) % 5 === 0; // fewer dark panes
+        placeWindow(wx, y, zs, 1.2, 1.3, 0.1, pane, skipLitS);
+        placeWindow(wx, y, zn, 1.2, 1.3, 0.1, pane, (i + f) % 6 === 0);
       }
-      for (let i = -1; i <= 1; i++) {
-        const wx = cx + i * 2.4;
-        const zn = cz - d * 0.5 + wall * 0.2;
-        this.box(1.15, 1.25, 0.08, wx, y, zn, glass, {
-          collide: false,
-          cast: false,
-        });
-        this.box(1.3, 0.08, 0.1, wx, y + 0.65, zn, trim, { collide: false, cast: false });
-        this.box(1.3, 0.08, 0.1, wx, y - 0.65, zn, trim, { collide: false, cast: false });
-        this.box(0.08, 1.3, 0.1, wx - 0.6, y, zn, trim, { collide: false, cast: false });
-        this.box(0.08, 1.3, 0.1, wx + 0.6, y, zn, trim, { collide: false, cast: false });
+
+      // East + west faces
+      const zCount = Math.max(2, Math.min(4, Math.floor(d / 3.2)));
+      for (let i = -zCount; i <= zCount; i++) {
+        if (i === 0 && f === 0 && floors <= 1) continue;
+        const wz = cz + i * Math.min(2.0, d / (zCount * 2 + 1));
+        const xe = cx + hw - wall * 0.15;
+        const xw = cx - hw + wall * 0.15;
+        placeWindow(xe, y, wz, 0.1, 1.2, 1.1, pane, (i + f * 2) % 5 === 0);
+        placeWindow(xw, y, wz, 0.1, 1.2, 1.1, pane, (i + f) % 4 === 0);
       }
     }
   }
@@ -508,12 +613,41 @@ export class Level {
       floors: 1,
       floorH: 5.5,
       wall: 0.5,
-      mat: this.kit.matConcreteDark,
+      mat: this.kit.matConcrete,
       roofMat: this.kit.matMetalRust,
       doorFace: 'w',
       doorW: 4.5,
       doorH: 3.8,
-      windows: false,
+      windows: true,
+    });
+    // High industrial lit clerestory windows (N/S/E) — denser for dusk skyline
+    const lit = this.kit.matWindowLit;
+    const cool = this.kit.matWindowLitCool;
+    for (let i = -3; i <= 3; i++) {
+      if (i === 0) continue;
+      this.box(1.5, 1.2, 0.12, 20 + i * 2.1, 4.2, 2 + 7 - 0.3, i % 2 ? lit : cool, {
+        collide: false,
+        cast: false,
+      });
+      this.box(1.5, 1.2, 0.12, 20 + i * 2.1, 4.2, 2 - 7 + 0.3, i % 2 ? cool : lit, {
+        collide: false,
+        cast: false,
+      });
+    }
+    for (let i = -3; i <= 3; i++) {
+      this.box(0.12, 1.15, 1.4, 20 + 8 - 0.3, 3.9, 2 + i * 1.85, i % 2 ? lit : cool, {
+        collide: false,
+        cast: false,
+      });
+    }
+    // Painted facade stripe — breaks flat concrete mass
+    this.box(16.2, 0.9, 0.08, 20, 2.4, 2 + 7 - 0.2, this.kit.matTrim, {
+      collide: false,
+      cast: false,
+    });
+    this.box(0.08, 0.9, 14.2, 20 + 8 - 0.2, 2.4, 2, this.kit.matMetalRust, {
+      collide: false,
+      cast: false,
     });
     // Loading dock ramp lip
     this.box(3, 0.4, 5, 11.2, 0.2, 2, this.kit.matConcrete);
@@ -522,16 +656,18 @@ export class Level {
     this.box(1.5, 2.2, 4, 24, 1.1, 5, this.kit.matMetalRust);
     this.box(1.2, 1.8, 3, 17, 0.9, -3, this.kit.matMetal);
     this.box(2.2, 1.4, 1.2, 22, 0.7, -4, this.kit.matWood, { rotY: 0.2 });
-    // Exterior corrugated lean-to
+    // Exterior corrugated lean-to — posts plant on ground
     this.box(4, 0.15, 6, 27.5, 3.2, 2, this.kit.matMetalRust, { collide: false });
-    this.box(0.3, 3.0, 0.3, 27.5, 1.5, -0.5, this.kit.matMetal, { collide: false });
-    this.box(0.3, 3.0, 0.3, 27.5, 1.5, 4.5, this.kit.matMetal, { collide: false });
+    this.box(0.3, 3.2, 0.3, 27.5, 1.6, -0.5, this.kit.matMetal, { collide: false });
+    this.box(0.3, 3.2, 0.3, 27.5, 1.6, 4.5, this.kit.matMetal, { collide: false });
+    this.contactShadow(27.5, 2, 4.5, 6.5, 0.22);
     // Pallet stack outside
-    this.box(1.6, 0.2, 1.2, 12, 0.15, -4, this.kit.matWood, { collide: false });
-    this.box(1.6, 0.2, 1.2, 12, 0.35, -4, this.kit.matWood, {
+    this.box(1.6, 0.2, 1.2, 12, 0.12, -4, this.kit.matWood, { collide: false });
+    this.box(1.6, 0.2, 1.2, 12, 0.32, -4, this.kit.matWood, {
       collide: false,
       rotY: 0.15,
     });
+    this.contactShadow(12, -4, 2.2, 1.8, 0.3);
     this.coverAt(13, 0, 2);
     this.coverAt(18, 0, -3);
     this.coverAt(22, 0, 5);
@@ -695,11 +831,13 @@ export class Level {
       rotY: rotY + 0.08,
       collide: false,
     });
+    this.contactShadow(x, z, 2.4, 1.8, 0.4);
     this.coverAt(x, 0, z - Math.cos(rotY) * 1.4);
   }
 
   private barrel(x: number, z: number, rotY: number): void {
     this.box(0.65, 1.05, 0.65, x, 0.52, z, this.kit.matBarrel, { rotY });
+    this.contactShadow(x, z, 0.95, 0.95, 0.35);
     this.coverAt(x, 0, z);
   }
 
@@ -740,6 +878,7 @@ export class Level {
         );
       }
     }
+    this.contactShadow(x, z, length * 1.05, 1.1, 0.36);
     this.coverAt(x, 0, z);
   }
 
@@ -750,6 +889,7 @@ export class Level {
       rotY,
       collide: false,
     });
+    this.contactShadow(x, z, 2.8, 1.1, 0.32);
     this.coverAt(x, 0, z);
   }
 
@@ -766,6 +906,7 @@ export class Level {
   private wreckedCar(x: number, z: number, rotY: number): void {
     const body = this.kit.matMetalRust;
     const dark = this.kit.matMetal;
+    this.contactShadow(x, z, 5.0, 2.6, 0.45);
     this.box(4.2, 0.7, 1.9, x, 0.55, z, body, { rotY });
     this.box(2.0, 0.85, 1.75, x + Math.cos(rotY) * 0.2, 1.25, z + Math.sin(rotY) * 0.2, dark, {
       rotY,
@@ -825,6 +966,7 @@ export class Level {
     ];
     for (const [x, z, s, r] of positions) {
       this.box(s, s, s, x, s * 0.5, z, wood, { rotY: r });
+      this.contactShadow(x, z, s * 1.35, s * 1.35, 0.32);
       this.coverAt(x, 0, z);
     }
     // Stacked crate tower
@@ -976,6 +1118,13 @@ export class Level {
 
     for (const s of specs) {
       const tiers = s.tiers ?? 1;
+      // Alternate facade materials so skyline isn't a single black value.
+      const matPick =
+        Math.abs(Math.round(s.x + s.z)) % 3 === 0
+          ? this.kit.matBrick
+          : Math.abs(Math.round(s.x * 0.5)) % 2 === 0
+            ? this.kit.matConcreteDark
+            : mat;
       // Stepped massing for readable dusk skyline
       for (let t = 0; t < tiers; t++) {
         const shrink = t * 0.12;
@@ -983,19 +1132,21 @@ export class Level {
         const td = s.d * (1 - shrink * 0.8);
         const th = s.h / tiers;
         const yBase = t * th;
-        this.box(tw, th, td, s.x, yBase + th * 0.5 - 0.5, s.z, mat, {
+        this.box(tw, th, td, s.x, yBase + th * 0.5 - 0.5, s.z, matPick, {
           collide: false,
-          cast: false,
-          receive: false,
+          cast: true,
+          receive: true,
         });
         // Side wing on mid tiers for irregular silhouette
         if (t === 1 && tiers >= 3) {
-          this.box(tw * 0.45, th * 0.85, td * 1.25, s.x + tw * 0.4, yBase + th * 0.4, s.z, mat, {
+          this.box(tw * 0.45, th * 0.85, td * 1.25, s.x + tw * 0.4, yBase + th * 0.4, s.z, matPick, {
             collide: false,
-            cast: false,
-            receive: false,
+            cast: true,
+            receive: true,
           });
         }
+        // Lit window grid on facade facing arena — kills pure-black skyline
+        this.addSilhouetteWindows(s.x, s.z, tw, td, yBase, th, t + s.x + s.z);
       }
       if (s.antenna) {
         this.box(0.35, 5.5, 0.35, s.x, s.h + 2, s.z, mat, {
@@ -1026,6 +1177,86 @@ export class Level {
           receive: false,
         });
       }
+    }
+  }
+
+  /** Dense emissive panes on distant blocks — warm/cool mix so skyline isn't black Legos. */
+  private addSilhouetteWindows(
+    cx: number,
+    cz: number,
+    w: number,
+    d: number,
+    yBase: number,
+    th: number,
+    seed: number,
+  ): void {
+    const warm = this.kit.matWindowLit;
+    const cool = this.kit.matWindowLitCool;
+    const cols = Math.max(3, Math.floor(w / 1.7));
+    const rows = Math.max(3, Math.floor(th / 2.2));
+    const towardOrigin = Math.atan2(-cx, -cz);
+
+    // Prefer the face looking toward the playable arena
+    const faces: Array<'n' | 's' | 'e' | 'w'> = ['n', 's', 'e', 'w'];
+    // Pick three most inward-facing walls for denser facade read
+    const scored = faces
+      .map((f) => {
+        const ang =
+          f === 'n' ? Math.PI : f === 's' ? 0 : f === 'e' ? -Math.PI * 0.5 : Math.PI * 0.5;
+        let diff = ang - towardOrigin;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        return { f, score: Math.abs(diff) };
+      })
+      .sort((a, b) => a.score - b.score);
+
+    for (const { f } of scored.slice(0, 3)) {
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const h = Math.abs(Math.sin(seed * 12.9898 + row * 78.233 + col * 37.719));
+          if (h < 0.22) continue; // denser occupancy than before
+          const litMat = h > 0.62 ? warm : cool;
+          const wy = yBase + 0.7 + row * (th / (rows + 0.35));
+          if (wy > yBase + th - 0.45) continue;
+          const u = (col - (cols - 1) * 0.5) * (w / (cols + 0.35));
+          const v = (col - (cols - 1) * 0.5) * (d / (cols + 0.35));
+          if (f === 's') {
+            this.box(0.95, 1.15, 0.1, cx + u, wy, cz + d * 0.5 + 0.05, litMat, {
+              collide: false,
+              cast: false,
+              receive: false,
+            });
+          } else if (f === 'n') {
+            this.box(0.95, 1.15, 0.1, cx + u, wy, cz - d * 0.5 - 0.05, litMat, {
+              collide: false,
+              cast: false,
+              receive: false,
+            });
+          } else if (f === 'e') {
+            this.box(0.1, 1.15, 0.95, cx + w * 0.5 + 0.05, wy, cz + v, litMat, {
+              collide: false,
+              cast: false,
+              receive: false,
+            });
+          } else {
+            this.box(0.1, 1.15, 0.95, cx - w * 0.5 - 0.05, wy, cz + v, litMat, {
+              collide: false,
+              cast: false,
+              receive: false,
+            });
+          }
+        }
+      }
+    }
+
+    // Horizontal ledge bands break pure massing on tall silhouettes
+    if (th > 8) {
+      const bandY = yBase + th * 0.55;
+      this.box(w * 1.02, 0.35, d * 1.02, cx, bandY, cz, this.kit.matConcreteDark, {
+        collide: false,
+        cast: false,
+        receive: true,
+      });
     }
   }
 

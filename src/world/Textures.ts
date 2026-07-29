@@ -273,28 +273,30 @@ export function createAsphaltTexture(
     // Aggregate flecks
     const agg = fine > 0.93 ? 22 : fine < 0.05 ? -10 : 0;
 
-    // Mid-gray asphalt (~0.38–0.48 luminance) so dusk still reads surface detail.
-    let base = 88 + n * 32 + grit * 16 + wear * 12 + agg;
+    // Hot mid asphalt (~0.62–0.78 luminance, warm bias) — cool hemi + ACES
+    // previously crushed this into a featureless blue void in screenshots.
+    let base = 158 + n * 42 + grit * 22 + wear * 16 + agg;
     // Faded traffic lane polish (slightly lighter bands)
     const lane = Math.abs(((x / size) * 10) % 1 - 0.5);
-    if (lane < 0.08) base += 10;
+    if (lane < 0.08) base += 18;
 
-    let r = base + grit * 3;
-    let g = base + grit * 2;
-    let b = base - 2 + grit;
+    // Warm gray (extra R, pull B) so sky fill can't paint the street cyan.
+    let r = base + grit * 6 + 10;
+    let g = base + grit * 4 + 2;
+    let b = base + grit * 2 - 14;
 
     if (oil > 0.68) {
-      const o = (oil - 0.68) * 70;
-      r -= o * 0.55;
-      g -= o * 0.35;
-      b -= o * 0.15;
+      const o = (oil - 0.68) * 55;
+      r -= o * 0.35;
+      g -= o * 0.28;
+      b -= o * 0.2;
     }
 
     if (crack > 0) {
       const k = Math.min(1, crack);
-      r -= 28 * k;
-      g -= 26 * k;
-      b -= 24 * k;
+      r -= 18 * k;
+      g -= 16 * k;
+      b -= 14 * k;
     }
 
     return [r, g, b];
@@ -326,34 +328,34 @@ export function createConcreteTexture(
     });
     const pit = hash2(x * 3, y * 3, seed + 33);
 
-    let v = 148 + n * 34 + speck * 18;
+    let v = 168 + n * 36 + speck * 18;
 
     // Expansion joints / slab grid
     const jx = x % slab;
     const jy = y % slab;
     if (jx < 3 || jy < 3) {
-      v -= 28 + (jx === 0 || jy === 0 ? 10 : 0);
+      v -= 24 + (jx === 0 || jy === 0 ? 8 : 0);
     }
 
     // Form-tie holes
     const fx = (x + 17) % 64;
     const fy = (y + 29) % 64;
-    if (fx * fx + fy * fy < 9) v -= 35;
+    if (fx * fx + fy * fy < 9) v -= 28;
 
     // Vertical water / soot staining
     if (runoff > 0.58 && (x % 37) < 9) {
-      v -= (runoff - 0.58) * 85;
+      v -= (runoff - 0.58) * 70;
     }
 
     // Broad dirt / moss patches
     if (stain > 0.6) {
-      v -= (stain - 0.6) * 95;
+      v -= (stain - 0.6) * 75;
     } else if (stain < 0.28) {
-      v += (0.28 - stain) * 25;
+      v += (0.28 - stain) * 28;
     }
 
     // Surface pitting
-    if (pit > 0.97) v -= 40;
+    if (pit > 0.97) v -= 32;
 
     // Faint form lines
     const form = Math.sin(y * 0.11) * 4;
@@ -778,9 +780,12 @@ export class LevelTextureKit {
   readonly matWood: THREE.MeshStandardMaterial;
   readonly matDirt: THREE.MeshStandardMaterial;
   readonly matGlassBroken: THREE.MeshStandardMaterial;
+  readonly matWindowLit: THREE.MeshStandardMaterial;
+  readonly matWindowLitCool: THREE.MeshStandardMaterial;
   readonly matRoadMark: THREE.MeshStandardMaterial;
   readonly matBlood: THREE.MeshStandardMaterial;
-  readonly matSilhouette: THREE.MeshBasicMaterial;
+  readonly matSilhouette: THREE.MeshStandardMaterial;
+  readonly matContactShadow: THREE.MeshBasicMaterial;
   readonly matTrim: THREE.MeshStandardMaterial;
   readonly matBarrel: THREE.MeshStandardMaterial;
 
@@ -812,36 +817,49 @@ export class LevelTextureKit {
       t.anisotropy = anisotropy;
     }
 
-    // Near-white tint multipliers — albedo maps carry the color; dusk stays readable.
+    // Hot warm tint multipliers — screenshot-proof against cool hemi / ACES crush.
     this.matAsphalt = new THREE.MeshStandardMaterial({
       map: this.asphalt,
-      color: 0xffffff,
-      roughness: 0.94,
+      color: 0xfff4e6,
+      roughness: 0.88,
       metalness: 0.02,
+      envMapIntensity: 0.45,
+      emissive: 0x1c1812,
+      emissiveIntensity: 0.12,
     });
     this.matConcrete = new THREE.MeshStandardMaterial({
       map: this.concrete,
       color: 0xffffff,
-      roughness: 0.9,
+      roughness: 0.85,
       metalness: 0.03,
+      envMapIntensity: 0.5,
+      emissive: 0x121210,
+      emissiveIntensity: 0.06,
     });
     this.matConcreteDark = new THREE.MeshStandardMaterial({
       map: this.concrete,
-      color: 0xc8c6c0,
-      roughness: 0.92,
+      color: 0xe4e0d6,
+      roughness: 0.88,
       metalness: 0.05,
+      envMapIntensity: 0.4,
+      emissive: 0x101010,
+      emissiveIntensity: 0.05,
     });
     this.matBrick = new THREE.MeshStandardMaterial({
       map: this.brick,
-      color: 0xffffff,
-      roughness: 0.88,
+      color: 0xfff0e8,
+      roughness: 0.85,
       metalness: 0.02,
+      emissive: 0x1a0e0a,
+      emissiveIntensity: 0.08,
     });
     this.matPlaster = new THREE.MeshStandardMaterial({
       map: this.plaster,
-      color: 0xffffff,
-      roughness: 0.91,
+      color: 0xfffaf2,
+      roughness: 0.88,
       metalness: 0.01,
+      emissive: 0x141210,
+      emissiveIntensity: 0.07,
     });
     this.matMetal = new THREE.MeshStandardMaterial({
       map: this.metal,
@@ -880,19 +898,41 @@ export class LevelTextureKit {
       metalness: 0.0,
     });
     this.matGlassBroken = new THREE.MeshStandardMaterial({
-      color: 0x7aa0b8,
-      roughness: 0.12,
-      metalness: 0.35,
+      color: 0x8ab0c8,
+      roughness: 0.18,
+      metalness: 0.28,
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.42,
       side: THREE.DoubleSide,
-      envMapIntensity: 0.6,
+      envMapIntensity: 0.7,
+      emissive: 0x1a2838,
+      emissiveIntensity: 0.25,
     });
+    // Hot occupied-room glow — photograph as bright facade signal under ACES.
+    this.matWindowLit = new THREE.MeshStandardMaterial({
+      color: 0xffd090,
+      roughness: 0.4,
+      metalness: 0.04,
+      emissive: 0xffa038,
+      emissiveIntensity: 2.1,
+      toneMapped: false,
+    });
+    this.matWindowLitCool = new THREE.MeshStandardMaterial({
+      color: 0xb8d8f0,
+      roughness: 0.35,
+      metalness: 0.06,
+      emissive: 0x6898c0,
+      emissiveIntensity: 1.7,
+      toneMapped: false,
+    });
+    // Unlit-leaning road paint — always readable vs asphalt in screenshots.
     this.matRoadMark = new THREE.MeshStandardMaterial({
       map: this.roadMark,
       color: 0xffffff,
-      roughness: 0.88,
+      roughness: 0.75,
       metalness: 0.0,
+      emissive: 0xc8c0a0,
+      emissiveIntensity: 0.55,
     });
     this.matBlood = new THREE.MeshStandardMaterial({
       map: this.blood,
@@ -902,15 +942,28 @@ export class LevelTextureKit {
       metalness: 0.0,
       side: THREE.DoubleSide,
     });
-    // Unlit near-black so dusk skyline stays readable against sky/fog.
-    this.matSilhouette = new THREE.MeshBasicMaterial({
-      color: 0x06080e,
+    // Mid charcoal skyline (NOT pure black) + slight warm so dusk sun rims catch.
+    this.matSilhouette = new THREE.MeshStandardMaterial({
+      map: this.concrete,
+      color: 0x6a7382,
+      roughness: 0.88,
+      metalness: 0.06,
+      envMapIntensity: 0.35,
+      emissive: 0x141820,
+      emissiveIntensity: 0.1,
+    });
+    // Soft blob under props / vehicles so they don't float over asphalt.
+    this.matContactShadow = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
     });
     this.matTrim = new THREE.MeshStandardMaterial({
       map: this.metal,
-      color: 0x9a9ca0,
-      roughness: 0.55,
-      metalness: 0.65,
+      color: 0xb0b4b8,
+      roughness: 0.5,
+      metalness: 0.68,
     });
     this.matBarrel = new THREE.MeshStandardMaterial({
       map: this.metalRustMap,
@@ -947,9 +1000,12 @@ export class LevelTextureKit {
       this.matWood,
       this.matDirt,
       this.matGlassBroken,
+      this.matWindowLit,
+      this.matWindowLitCool,
       this.matRoadMark,
       this.matBlood,
       this.matSilhouette,
+      this.matContactShadow,
       this.matTrim,
       this.matBarrel,
     ];

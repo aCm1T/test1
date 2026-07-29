@@ -82,7 +82,7 @@ export class Enemy {
     weapon: THREE.Mesh;
   };
 
-  private readonly materials: THREE.MeshStandardMaterial[] = [];
+  private readonly materials: THREE.Material[] = [];
   private readonly bodyMat: THREE.MeshStandardMaterial;
   private readonly gearMat: THREE.MeshStandardMaterial;
   private readonly skinMat: THREE.MeshStandardMaterial;
@@ -100,19 +100,25 @@ export class Enemy {
     this.patrolSeed = Math.random() * 1000;
 
     this.bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x4a5538,
-      roughness: 0.88,
-      metalness: 0.05,
+      color: 0x6a7850,
+      roughness: 0.82,
+      metalness: 0.04,
+      emissive: 0x1a2210,
+      emissiveIntensity: 0.18,
     });
     this.gearMat = new THREE.MeshStandardMaterial({
-      color: 0x2c3036,
-      roughness: 0.7,
-      metalness: 0.25,
+      color: 0x3a4048,
+      roughness: 0.62,
+      metalness: 0.28,
+      emissive: 0x101418,
+      emissiveIntensity: 0.12,
     });
     this.skinMat = new THREE.MeshStandardMaterial({
-      color: 0xb08a68,
-      roughness: 0.75,
+      color: 0xc4a07a,
+      roughness: 0.7,
       metalness: 0.0,
+      emissive: 0x2a1810,
+      emissiveIntensity: 0.08,
     });
     this.materials.push(this.bodyMat, this.gearMat, this.skinMat);
 
@@ -320,53 +326,107 @@ export class Enemy {
   private buildMesh(): Enemy['parts'] {
     const g = this.mesh;
 
+    // Cheap ground contact blob — soldiers don't float over asphalt
+    const shadowMat = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+    });
+    this.materials.push(shadowMat);
+    const blob = new THREE.Mesh(new THREE.CircleGeometry(0.55, 16), shadowMat);
+    blob.rotation.x = -Math.PI * 0.5;
+    blob.position.y = 0.02;
+    blob.renderOrder = 1;
+    g.add(blob);
+
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.75, 0.32), this.bodyMat);
     torso.position.set(0, 1.25, 0);
     torso.castShadow = true;
+    torso.receiveShadow = true;
     g.add(torso);
 
-    // Chest rig / plate
+    // Chest rig / plate — darker contrast vs olive body
     const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.12), this.gearMat);
     plate.position.set(0, 1.35, 0.18);
     plate.castShadow = true;
+    plate.receiveShadow = true;
     g.add(plate);
+
+    // Shoulder pouches for silhouette read at range
+    const pouchL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.18, 0.1), this.gearMat);
+    pouchL.position.set(-0.32, 1.45, 0.12);
+    pouchL.castShadow = true;
+    g.add(pouchL);
+    const pouchR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.18, 0.1), this.gearMat);
+    pouchR.position.set(0.32, 1.45, 0.12);
+    pouchR.castShadow = true;
+    g.add(pouchR);
 
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.32, 0.28), this.skinMat);
     head.position.set(0, 1.82, 0);
     head.castShadow = true;
+    head.receiveShadow = true;
     g.add(head);
 
-    // Helmet
-    const helmet = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 0.34), this.gearMat);
+    // Helmet — slightly lighter than plate so head reads at dusk
+    const helmMat = new THREE.MeshStandardMaterial({
+      color: 0x4a5540,
+      roughness: 0.7,
+      metalness: 0.15,
+      emissive: 0x152010,
+      emissiveIntensity: 0.15,
+    });
+    this.materials.push(helmMat);
+    const helmet = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 0.34), helmMat);
     helmet.position.set(0, 1.96, 0.02);
     helmet.castShadow = true;
     g.add(helmet);
 
+    // Visor strip — tiny cool emissive so heads pop vs skyline
+    const visorMat = new THREE.MeshStandardMaterial({
+      color: 0x1a2228,
+      roughness: 0.25,
+      metalness: 0.6,
+      emissive: 0x203040,
+      emissiveIntensity: 0.35,
+    });
+    this.materials.push(visorMat);
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.08), visorMat);
+    visor.position.set(0, 1.9, 0.16);
+    g.add(visor);
+
     const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.6, 0.16), this.bodyMat);
     leftArm.position.set(-0.4, 1.2, 0);
     leftArm.castShadow = true;
+    leftArm.receiveShadow = true;
     g.add(leftArm);
 
     const rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.6, 0.16), this.bodyMat);
     rightArm.position.set(0.4, 1.2, 0);
     rightArm.castShadow = true;
+    rightArm.receiveShadow = true;
     g.add(rightArm);
 
     const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.7, 0.22), this.gearMat);
     leftLeg.position.set(-0.16, 0.4, 0);
     leftLeg.castShadow = true;
+    leftLeg.receiveShadow = true;
     g.add(leftLeg);
 
     const rightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.7, 0.22), this.gearMat);
     rightLeg.position.set(0.16, 0.4, 0);
     rightLeg.castShadow = true;
+    rightLeg.receiveShadow = true;
     g.add(rightLeg);
 
-    // Rifle
+    // Rifle — brighter metal so it doesn't vanish into dusk
     const weaponMat = new THREE.MeshStandardMaterial({
-      color: 0x2a2e32,
-      roughness: 0.48,
-      metalness: 0.75,
+      color: 0x3a424a,
+      roughness: 0.42,
+      metalness: 0.72,
+      emissive: 0x101418,
+      emissiveIntensity: 0.12,
     });
     this.materials.push(weaponMat);
     const weapon = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.85), weaponMat);

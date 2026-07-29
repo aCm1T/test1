@@ -237,6 +237,13 @@ export class PlayerController {
     this.yaw += yawDelta;
   }
 
+  /** Absolute look angles (radians). Pitch negative = look down. */
+  setLook(yaw: number, pitch: number): void {
+    this.yaw = yaw;
+    this.pitch = MathUtils.clamp(pitch, -Math.PI * 0.49, Math.PI * 0.49);
+    this.syncTransforms();
+  }
+
   getEyeHeight(): number {
     return this.eyeHeight;
   }

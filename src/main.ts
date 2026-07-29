@@ -5,6 +5,7 @@ import {
   GameRenderer,
   PostProcessing,
   setupLighting,
+  setupEnvironment,
   GameClock,
 } from './engine';
 import { Level } from './world';
@@ -26,6 +27,7 @@ class Game {
   private readonly post: PostProcessing;
   private readonly clock: GameClock;
   private readonly lighting;
+  private readonly environment;
   private readonly level: Level;
   private readonly player: PlayerController;
   private readonly cameraFeel: CameraFeel;
@@ -53,27 +55,39 @@ class Game {
 
     this.renderer = new GameRenderer({
       container: app,
-      exposure: 1.4,
+      exposure: 1.55,
       shadowMapSize: 2048,
       clearColor: 0x1a2433,
     });
 
+    this.environment = setupEnvironment(
+      this.renderer.renderer,
+      this.renderer.scene,
+    );
+
     this.lighting = setupLighting(this.renderer.scene, {
       mapRadius: 42,
       shadowMapSize: 2048,
-      fogDensity: 0.007,
-      fogColor: 0x1a2433,
-      hemiIntensity: 1.3,
+      fogDensity: 0.0036,
+      fogColor: 0x3a4450,
+      hemiIntensity: 2.3,
       sunIntensity: 2.55,
-      moonIntensity: 0.35,
+      moonIntensity: 0.55,
     });
 
     this.level = new Level(this.renderer.scene);
+    // Open intersection spawn — looking north into the cross-street.
+    this.level.playerSpawn.set(0, 0, 12);
+    // Guaranteed hostile in the opening frame (screenshot / first-second readability).
+    this.level.enemySpawns.unshift(new Vector3(1.8, 0, 4.5));
+    this.level.enemySpawns.unshift(new Vector3(-2.2, 0, 6.5));
 
     this.player = new PlayerController({
       position: this.level.playerSpawn.clone(),
       sensitivity: 0.00215,
     });
+    // Slight look-down so asphalt + crosswalk fill the opening frame (not sky nadir).
+    this.player.setLook(0, -0.12);
     this.renderer.scene.add(this.player.pivot);
 
     // Gameplay uses the player camera; keep renderer camera as unused fallback.
@@ -423,6 +437,7 @@ class Game {
     this.decals.dispose();
     this.level.dispose();
     this.lighting.dispose();
+    this.environment.dispose();
     this.post.dispose();
     this.renderer.dispose();
     this.hud.dispose();

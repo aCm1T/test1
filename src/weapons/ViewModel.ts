@@ -98,88 +98,94 @@ export class ViewModel {
   private idleT = 0;
   private _reloadDuration = 1.6;
 
-  // ─── PBR palette: dusk-readable nitride / polymer (not near-black) ───────
-  // Metal: mid-gray nitride + specular so warm sun catches edges.
-  // Soft emissive rim 0x111418 keeps silhouettes readable in shadow.
-  private readonly nitride = mat(0x2a2e32, {
-    metalness: 0.88,
-    roughness: 0.42,
-    emissive: 0x111418,
+  // ─── High-contrast COD palette: dark polymer vs bright steel vs FDE accents ─
+  // Prior mid-gray stack photographed as "gray Legos" — separate value bands hard.
+  private readonly nitride = mat(0x2a3038, {
+    metalness: 0.72,
+    roughness: 0.38,
+    emissive: 0x12161c,
+    emissiveIntensity: 0.28,
+  });
+  private readonly nitrideWorn = mat(0x3a424c, {
+    metalness: 0.62,
+    roughness: 0.48,
+    emissive: 0x14181e,
+    emissiveIntensity: 0.22,
+  });
+  private readonly steel = mat(0x8a929c, {
+    metalness: 0.78,
+    roughness: 0.28,
+    emissive: 0x1c2228,
+    emissiveIntensity: 0.2,
+  });
+  private readonly steelBright = mat(0xc0c8d0, {
+    metalness: 0.85,
+    roughness: 0.22,
+    emissive: 0x202830,
     emissiveIntensity: 0.18,
   });
-  private readonly nitrideWorn = mat(0x32383e, {
-    metalness: 0.82,
-    roughness: 0.48,
-    emissive: 0x111418,
+  // Polymer: near-black with grit — must sit darker than metal receivers.
+  private readonly polymer = mat(0x14181c, {
+    metalness: 0.04,
+    roughness: 0.88,
+    emissive: 0x080a0c,
+    emissiveIntensity: 0.16,
+  });
+  private readonly polymerGrit = mat(0x0e1216, {
+    metalness: 0.03,
+    roughness: 0.94,
+    emissive: 0x06080a,
     emissiveIntensity: 0.14,
   });
-  private readonly steel = mat(0x3a3f45, {
-    metalness: 0.85,
-    roughness: 0.4,
-    emissive: 0x111418,
-    emissiveIntensity: 0.12,
-  });
-  private readonly steelBright = mat(0x4a5058, {
-    metalness: 0.78,
-    roughness: 0.45,
-    emissive: 0x111418,
-    emissiveIntensity: 0.1,
-  });
-  // Polymer: charcoal with roughness variation across grit / soft / base.
-  private readonly polymer = mat(0x1c2228, {
-    metalness: 0.08,
-    roughness: 0.85,
-    emissive: 0x111418,
-    emissiveIntensity: 0.1,
-  });
-  private readonly polymerGrit = mat(0x161b20, {
+  private readonly polymerSoft = mat(0x1c2228, {
     metalness: 0.05,
-    roughness: 0.92,
-    emissive: 0x111418,
-    emissiveIntensity: 0.08,
+    roughness: 0.8,
+    emissive: 0x0a0c10,
+    emissiveIntensity: 0.14,
   });
-  private readonly polymerSoft = mat(0x222830, {
-    metalness: 0.1,
-    roughness: 0.78,
-    emissive: 0x111418,
-    emissiveIntensity: 0.1,
+  // FDE / tan accents break the gray mass (magwell lip, stock cheek, grip panels).
+  private readonly fde = mat(0xb08a58, {
+    metalness: 0.12,
+    roughness: 0.72,
+    emissive: 0x2a1c0c,
+    emissiveIntensity: 0.22,
   });
-  private readonly railTooth = mat(0x3a3f45, {
-    metalness: 0.8,
+  private readonly railTooth = mat(0x5a626c, {
+    metalness: 0.82,
+    roughness: 0.4,
+    emissive: 0x141820,
+    emissiveIntensity: 0.16,
+  });
+  private readonly opticHousing = mat(0x101418, {
+    metalness: 0.7,
+    roughness: 0.42,
+    emissive: 0x0c1014,
+    emissiveIntensity: 0.18,
+  });
+  // Optic glass: hot cyan so the window reads as glass, not a gray slab.
+  private readonly opticGlass = mat(0x184860, {
+    metalness: 0.25,
+    roughness: 0.08,
+    emissive: 0x2ad0e8,
+    emissiveIntensity: 1.15,
+  });
+  private readonly ironGlow = mat(0x2a1410, {
+    metalness: 0.5,
     roughness: 0.48,
-    emissive: 0x111418,
-    emissiveIntensity: 0.12,
+    emissive: 0xff5522,
+    emissiveIntensity: 0.85,
   });
-  private readonly opticHousing = mat(0x2a2e32, {
-    metalness: 0.75,
-    roughness: 0.45,
-    emissive: 0x111418,
-    emissiveIntensity: 0.12,
-  });
-  // Optic glass: cooler teal tint + stronger emissive so the window reads at dusk.
-  private readonly opticGlass = mat(0x1a3040, {
-    metalness: 0.35,
-    roughness: 0.12,
-    emissive: 0x1a3848,
-    emissiveIntensity: 0.55,
-  });
-  private readonly ironGlow = mat(0x2a1814, {
-    metalness: 0.55,
-    roughness: 0.5,
-    emissive: 0xff4422,
-    emissiveIntensity: 0.45,
-  });
-  private readonly blade = mat(0xb8c8d0, {
-    metalness: 0.9,
-    roughness: 0.22,
-    emissive: 0x111418,
-    emissiveIntensity: 0.08,
-  });
-  private readonly bladeEdge = mat(0xd0d4d8, {
+  private readonly blade = mat(0xd0dce4, {
     metalness: 0.92,
     roughness: 0.18,
-    emissive: 0x111418,
-    emissiveIntensity: 0.06,
+    emissive: 0x14181c,
+    emissiveIntensity: 0.1,
+  });
+  private readonly bladeEdge = mat(0xe8eef2, {
+    metalness: 0.94,
+    roughness: 0.14,
+    emissive: 0x181c20,
+    emissiveIntensity: 0.08,
   });
   private readonly flashMat = mat(0xffcc66, {
     metalness: 0,
@@ -187,6 +193,9 @@ export class ViewModel {
     emissive: 0xffaa44,
     emissiveIntensity: 2.8,
   });
+
+  private readonly fillLight: PointLight;
+  private readonly rimLight: PointLight;
 
   constructor(camera: PerspectiveCamera) {
     this.camera = camera;
@@ -219,6 +228,18 @@ export class ViewModel {
     this.muzzleLight = new PointLight(0xffaa55, 0, 3.2, 2);
     this.muzzleLight.visible = false;
     this.root.add(this.muzzleLight);
+
+    // Dedicated viewmodel fill — world dusk lights leave gun as flat gray Legos.
+    this.fillLight = new PointLight(0xffe0c0, 1.35, 1.8, 2);
+    this.fillLight.name = 'ViewModelFill';
+    this.fillLight.position.set(0.12, 0.08, 0.05);
+    this.fillLight.castShadow = false;
+    this.root.add(this.fillLight);
+    this.rimLight = new PointLight(0x88aacc, 0.55, 1.4, 2);
+    this.rimLight.name = 'ViewModelRim';
+    this.rimLight.position.set(-0.18, 0.06, -0.1);
+    this.rimLight.castShadow = false;
+    this.root.add(this.rimLight);
 
     camera.add(this.root);
     this.applyPoseImmediate('hip');
@@ -605,16 +626,16 @@ export class ViewModel {
     // Magwell flare
     g.add(this.mesh(new BoxGeometry(0.06, 0.04, 0.078), this.nitrideWorn, 0, -0.04, -0.015));
     g.add(this.mesh(new BoxGeometry(0.068, 0.018, 0.086), this.steel, 0, -0.062, -0.015));
-    // Magwell lip
-    g.add(this.mesh(new BoxGeometry(0.072, 0.008, 0.09), this.nitride, 0, -0.072, -0.015));
+    // Magwell lip — FDE accent breaks gray mass
+    g.add(this.mesh(new BoxGeometry(0.072, 0.008, 0.09), this.fde, 0, -0.072, -0.015));
 
-    // Magazine (PMAG-style)
+    // Magazine (PMAG-style) — dark polymer body
     const mag = this.mesh(new BoxGeometry(0.048, 0.145, 0.068), this.polymerGrit, 0, -0.145, -0.015);
     mag.name = 'magazine';
     mag.userData.baseY = -0.145;
     g.add(mag);
-    // Mag baseplate
-    g.add(this.mesh(new BoxGeometry(0.052, 0.012, 0.074), this.polymerSoft, 0, -0.22, -0.015));
+    // Mag baseplate — FDE
+    g.add(this.mesh(new BoxGeometry(0.052, 0.012, 0.074), this.fde, 0, -0.22, -0.015));
     // Mag witness window stripe
     g.add(this.mesh(new BoxGeometry(0.008, 0.1, 0.03), this.steelBright, 0.022, -0.14, -0.015));
 
@@ -622,10 +643,10 @@ export class ViewModel {
     const grip = this.mesh(new BoxGeometry(0.038, 0.115, 0.052), this.polymerGrit, 0, -0.105, 0.085);
     grip.rotation.x = 0.38;
     g.add(grip);
-    const gripPanel = this.mesh(new BoxGeometry(0.042, 0.08, 0.01), this.polymer, 0.02, -0.1, 0.085);
+    const gripPanel = this.mesh(new BoxGeometry(0.042, 0.08, 0.01), this.fde, 0.02, -0.1, 0.085);
     gripPanel.rotation.x = 0.38;
     g.add(gripPanel);
-    const gripPanelL = this.mesh(new BoxGeometry(0.042, 0.08, 0.01), this.polymer, -0.02, -0.1, 0.085);
+    const gripPanelL = this.mesh(new BoxGeometry(0.042, 0.08, 0.01), this.fde, -0.02, -0.1, 0.085);
     gripPanelL.rotation.x = 0.38;
     g.add(gripPanelL);
     // Grip backstrap ridges
@@ -636,12 +657,12 @@ export class ViewModel {
     }
 
     // Buffer tube
-    g.add(this.cyl(this.steel, 0.016, 0.016, 0.14, 0, 0.025, 0.18, 10));
+    g.add(this.cyl(this.steelBright, 0.016, 0.016, 0.14, 0, 0.025, 0.18, 10));
     // Stock body
     g.add(this.mesh(new BoxGeometry(0.048, 0.055, 0.14), this.polymer, 0, 0.02, 0.28));
     g.add(this.mesh(new BoxGeometry(0.062, 0.095, 0.032), this.polymerGrit, 0, -0.005, 0.35));
-    // Stock cheek weld
-    g.add(this.mesh(new BoxGeometry(0.05, 0.025, 0.1), this.polymerSoft, 0, 0.045, 0.28));
+    // Stock cheek weld — FDE
+    g.add(this.mesh(new BoxGeometry(0.05, 0.025, 0.1), this.fde, 0, 0.045, 0.28));
     // Stock buttpad
     g.add(this.mesh(new BoxGeometry(0.066, 0.1, 0.014), this.polymerGrit, 0, -0.005, 0.37));
 
@@ -656,14 +677,19 @@ export class ViewModel {
     // Optic hood / window frame
     g.add(this.mesh(new BoxGeometry(0.04, 0.038, 0.012), this.opticHousing, 0, 0.125, -0.048));
     g.add(this.mesh(new BoxGeometry(0.04, 0.038, 0.012), this.opticHousing, 0, 0.125, 0.012));
-    // Glass panes
-    g.add(this.mesh(new BoxGeometry(0.03, 0.028, 0.006), this.opticGlass, 0, 0.125, -0.052));
-    g.add(this.mesh(new BoxGeometry(0.03, 0.028, 0.006), this.opticGlass, 0, 0.125, 0.016));
+    // Glass panes — hot cyan read
+    g.add(this.mesh(new BoxGeometry(0.032, 0.03, 0.008), this.opticGlass, 0, 0.125, -0.052));
+    g.add(this.mesh(new BoxGeometry(0.032, 0.03, 0.008), this.opticGlass, 0, 0.125, 0.016));
     // Side optic walls
     g.add(this.mesh(new BoxGeometry(0.006, 0.038, 0.055), this.opticHousing, 0.018, 0.125, -0.018));
     g.add(this.mesh(new BoxGeometry(0.006, 0.038, 0.055), this.opticHousing, -0.018, 0.125, -0.018));
-    // Brightness dial
+    // Brightness dial + battery cap (orange accent)
     g.add(this.cyl(this.steelBright, 0.008, 0.008, 0.012, 0.026, 0.11, -0.02, 8));
+    g.add(this.mesh(new BoxGeometry(0.012, 0.012, 0.012), this.ironGlow, -0.022, 0.11, 0.0));
+    g.add(this.mesh(new BoxGeometry(0.012, 0.012, 0.012), this.ironGlow, -0.022, 0.11, -0.028));
+
+    // Handguard heatshield stripe
+    g.add(this.mesh(new BoxGeometry(0.058, 0.006, 0.2), this.fde, 0, 0.038, -0.28));
 
     // Backup iron sights (rear + front, subtle emissive)
     g.add(this.mesh(new BoxGeometry(0.028, 0.018, 0.014), this.steel, 0, 0.095, 0.08));
@@ -853,5 +879,7 @@ export class ViewModel {
       }
     });
     this.muzzleLight.dispose();
+    this.fillLight.dispose();
+    this.rimLight.dispose();
   }
 }
