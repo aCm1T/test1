@@ -782,6 +782,8 @@ export class LevelTextureKit {
   readonly matGlassBroken: THREE.MeshStandardMaterial;
   readonly matWindowLit: THREE.MeshStandardMaterial;
   readonly matWindowLitCool: THREE.MeshStandardMaterial;
+  readonly matLampBulb: THREE.MeshStandardMaterial;
+  readonly matStreetDeck: THREE.MeshLambertMaterial;
   readonly matRoadMark: THREE.MeshStandardMaterial;
   readonly matBlood: THREE.MeshStandardMaterial;
   readonly matSilhouette: THREE.MeshStandardMaterial;
@@ -909,12 +911,13 @@ export class LevelTextureKit {
       emissiveIntensity: 0.25,
     });
     // Hot occupied-room glow — photograph as bright facade signal under ACES.
+    // toneMapped:false + high emissive so bloom picks windows up at dusk.
     this.matWindowLit = new THREE.MeshStandardMaterial({
       color: 0xffd090,
       roughness: 0.4,
       metalness: 0.04,
       emissive: 0xffa038,
-      emissiveIntensity: 2.1,
+      emissiveIntensity: 3.4,
       toneMapped: false,
     });
     this.matWindowLitCool = new THREE.MeshStandardMaterial({
@@ -922,8 +925,25 @@ export class LevelTextureKit {
       roughness: 0.35,
       metalness: 0.06,
       emissive: 0x6898c0,
-      emissiveIntensity: 1.7,
+      emissiveIntensity: 2.8,
       toneMapped: false,
+    });
+    // Streetlamp bulb — small hot point for dusk bloom.
+    this.matLampBulb = new THREE.MeshStandardMaterial({
+      color: 0xffe8c0,
+      roughness: 0.35,
+      metalness: 0.05,
+      emissive: 0xffcc66,
+      emissiveIntensity: 4.2,
+      toneMapped: false,
+    });
+    // Readable street overlay under dusk hemi — lit + mild emissive, not pure unlit.
+    this.matStreetDeck = new THREE.MeshLambertMaterial({
+      map: this.asphalt,
+      color: 0xc4b8a4,
+      emissive: 0x2e2820,
+      emissiveIntensity: 0.12,
+      fog: true,
     });
     // Unlit-leaning road paint — always readable vs asphalt in screenshots.
     this.matRoadMark = new THREE.MeshStandardMaterial({
@@ -1002,6 +1022,8 @@ export class LevelTextureKit {
       this.matGlassBroken,
       this.matWindowLit,
       this.matWindowLitCool,
+      this.matLampBulb,
+      this.matStreetDeck,
       this.matRoadMark,
       this.matBlood,
       this.matSilhouette,

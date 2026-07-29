@@ -124,24 +124,19 @@ export class Level {
     ground.name = 'GroundAsphalt';
     ground.receiveShadow = true;
 
-    // Screenshot-proof street deck — MeshBasic so fog/PBR/shadows can't erase it.
+    // Screenshot-proof street deck — Lambert + mild emissive so dusk still reads warm asphalt.
     const deckGeo = new THREE.PlaneGeometry(ARENA * 2.2, ARENA * 2.2);
     this.disposables.push(deckGeo);
-    const deckMat = new THREE.MeshBasicMaterial({
-      map: this.kit.asphalt,
-      color: 0xc4b8a4,
-      fog: true,
-    });
-    const deck = new THREE.Mesh(deckGeo, deckMat);
+    const deck = new THREE.Mesh(deckGeo, this.kit.matStreetDeck);
     deck.rotation.x = -Math.PI * 0.5;
     deck.position.set(0, 0.04, 0);
-    deck.receiveShadow = false;
+    deck.receiveShadow = true;
     deck.castShadow = false;
     deck.frustumCulled = false;
     deck.name = 'GroundAsphaltDeck';
     this.group.add(deck);
 
-    // Outer skirt
+    // Outer MeshBasic skirt — fallback fill beyond the lit deck.
     const skirtGeo = new THREE.PlaneGeometry(ARENA * 5, ARENA * 5);
     this.disposables.push(skirtGeo);
     const skirtMat = new THREE.MeshBasicMaterial({
@@ -231,6 +226,20 @@ export class Level {
         cast: false,
       });
     }
+    // E-W approach lane arrows — keep clear of spawn AABB [-2.5, 2.5]
+    for (let i = 0; i < 3; i++) {
+      this.box(0.55, 0.042, 0.9, 6.8 + i * 1.35, 0.037, 1.6, m, {
+        collide: false,
+        cast: false,
+      });
+      this.box(0.55, 0.042, 0.9, -(6.8 + i * 1.35), 0.037, -1.6, m, {
+        collide: false,
+        cast: false,
+      });
+    }
+    // Short N approach arrow stubs just outside clear zone
+    this.box(0.7, 0.042, 0.5, 0, 0.037, 3.6, m, { collide: false, cast: false });
+    this.box(0.7, 0.042, 0.5, 0, 0.037, -3.6, m, { collide: false, cast: false });
   }
 
   private buildCurbsAndStreetFurniture(): void {
@@ -259,7 +268,7 @@ export class Level {
       this.box(0.28, 0.95, 0.28, x, 0.48, z, trim);
     }
 
-    // Street light poles (visual cover + collision)
+    // Street light poles (visual cover + collision) — thin poles OK
     const poles: Array<[number, number]> = [
       [-6.5, -16],
       [6.5, -16],
@@ -271,14 +280,12 @@ export class Level {
       [18, 10],
     ];
     for (const [x, z] of poles) {
-      this.box(0.22, 5.2, 0.22, x, 2.6, z, trim);
-      this.box(1.4, 0.12, 0.35, x + 0.55, 5.1, z, this.kit.matMetal, {
-        collide: false,
-      });
-      this.box(0.5, 0.2, 0.5, x + 1.1, 5.0, z, this.kit.matMetalRust, {
-        collide: false,
-      });
+      this.streetLight(x, z);
     }
+
+    // Intersection streetlights — outside spawn clear zone [-2.5, 2.5]
+    this.streetLight(-5.6, -8.2);
+    this.streetLight(5.6, 8.2);
 
     // Manhole covers on asphalt
     const covers: Array<[number, number]> = [
@@ -287,6 +294,8 @@ export class Level {
       [12, 1],
       [-10, -2],
       [1, 22],
+      // Open intersection manhole — outside spawn clear zone
+      [3.4, -3.2],
     ];
     for (const [x, z] of covers) {
       this.box(1.1, 0.06, 1.1, x, 0.04, z, this.kit.matMetal, {
@@ -295,6 +304,46 @@ export class Level {
         rotY: 0.3,
       });
     }
+
+    // Broken curb chips near intersection corners (flat debris, no collide)
+    const chips: Array<[number, number, number]> = [
+      [-5.5, -4.0, 0.35],
+      [-4.2, -5.5, -0.5],
+      [5.4, 4.1, 0.6],
+      [4.0, 5.5, -0.25],
+      [-5.3, 4.3, 0.15],
+      [5.5, -4.2, -0.4],
+    ];
+    for (const [x, z, rot] of chips) {
+      this.box(0.42, 0.1, 0.28, x, 0.06, z, curb, {
+        collide: false,
+        cast: false,
+        rotY: rot,
+      });
+      this.box(0.28, 0.08, 0.22, x + 0.35, 0.05, z + 0.2, this.kit.matConcrete, {
+        collide: false,
+        cast: false,
+        rotY: rot + 0.7,
+      });
+    }
+  }
+
+  /** Thin pole + arm + emissive bulb. Collides as a skinny cylinder approx. */
+  private streetLight(x: number, z: number): void {
+    const trim = this.kit.matTrim;
+    this.box(0.2, 5.2, 0.2, x, 2.6, z, trim);
+    this.box(1.4, 0.12, 0.35, x + 0.55, 5.1, z, this.kit.matMetal, {
+      collide: false,
+    });
+    this.box(0.45, 0.18, 0.45, x + 1.1, 5.0, z, this.kit.matMetalRust, {
+      collide: false,
+    });
+    // Hot bulb under the arm for dusk bloom
+    this.box(0.28, 0.16, 0.28, x + 1.05, 4.88, z, this.kit.matLampBulb, {
+      collide: false,
+      cast: false,
+      receive: false,
+    });
   }
 
   private buildPerimeterWalls(): void {
@@ -1134,53 +1183,64 @@ export class Level {
           : Math.abs(Math.round(s.x * 0.5)) % 2 === 0
             ? this.kit.matConcreteDark
             : mat;
-      // Stepped massing for readable dusk skyline
+      // Soft contact disc so distant blocks read as planted on asphalt.
+      this.contactShadow(s.x, s.z, s.w * 1.2, s.d * 1.2, 0.28);
+      // Stepped massing for readable dusk skyline — sit ON the ground (yBase=0).
       for (let t = 0; t < tiers; t++) {
         const shrink = t * 0.12;
         const tw = s.w * (1 - shrink);
         const td = s.d * (1 - shrink * 0.8);
         const th = s.h / tiers;
         const yBase = t * th;
-        this.box(tw, th, td, s.x, yBase + th * 0.5 - 0.5, s.z, matPick, {
+        this.box(tw, th, td, s.x, yBase + th * 0.5, s.z, matPick, {
           collide: false,
           cast: true,
           receive: true,
         });
         // Side wing on mid tiers for irregular silhouette
         if (t === 1 && tiers >= 3) {
-          this.box(tw * 0.45, th * 0.85, td * 1.25, s.x + tw * 0.4, yBase + th * 0.4, s.z, matPick, {
-            collide: false,
-            cast: true,
-            receive: true,
-          });
+          this.box(
+            tw * 0.45,
+            th * 0.85,
+            td * 1.25,
+            s.x + tw * 0.4,
+            yBase + th * 0.425,
+            s.z,
+            matPick,
+            {
+              collide: false,
+              cast: true,
+              receive: true,
+            },
+          );
         }
         // Lit window grid on facade facing arena — kills pure-black skyline
         this.addSilhouetteWindows(s.x, s.z, tw, td, yBase, th, t + s.x + s.z);
       }
       if (s.antenna) {
-        this.box(0.35, 5.5, 0.35, s.x, s.h + 2, s.z, mat, {
+        this.box(0.35, 5.5, 0.35, s.x, s.h + 2.75, s.z, mat, {
           collide: false,
           cast: false,
           receive: false,
         });
-        this.box(1.8, 0.2, 0.2, s.x, s.h + 4.2, s.z, mat, {
+        this.box(1.8, 0.2, 0.2, s.x, s.h + 5.0, s.z, mat, {
           collide: false,
           cast: false,
           receive: false,
         });
       }
       if (s.waterTower) {
-        this.box(2.2, 1.8, 2.2, s.x, s.h + 1.2, s.z, mat, {
+        this.box(2.2, 1.8, 2.2, s.x, s.h + 1.9, s.z, mat, {
           collide: false,
           cast: false,
           receive: false,
         });
-        this.box(0.25, 2.2, 0.25, s.x - 0.7, s.h - 0.2, s.z - 0.7, mat, {
+        this.box(0.25, 2.2, 0.25, s.x - 0.7, s.h + 0.5, s.z - 0.7, mat, {
           collide: false,
           cast: false,
           receive: false,
         });
-        this.box(0.25, 2.2, 0.25, s.x + 0.7, s.h - 0.2, s.z + 0.7, mat, {
+        this.box(0.25, 2.2, 0.25, s.x + 0.7, s.h + 0.5, s.z + 0.7, mat, {
           collide: false,
           cast: false,
           receive: false,
