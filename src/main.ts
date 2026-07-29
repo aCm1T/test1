@@ -53,15 +53,19 @@ class Game {
 
     this.renderer = new GameRenderer({
       container: app,
-      exposure: 1.1,
+      exposure: 1.4,
       shadowMapSize: 2048,
-      clearColor: 0x0a0e14,
+      clearColor: 0x1a2433,
     });
 
     this.lighting = setupLighting(this.renderer.scene, {
       mapRadius: 42,
       shadowMapSize: 2048,
-      fogDensity: 0.018,
+      fogDensity: 0.007,
+      fogColor: 0x1a2433,
+      hemiIntensity: 1.3,
+      sunIntensity: 2.55,
+      moonIntensity: 0.35,
     });
 
     this.level = new Level(this.renderer.scene);
@@ -433,4 +437,43 @@ function MathUtilsClamp(v: number, min: number, max: number): number {
 
 // Boot
 const game = new Game();
+
+/** Headless / QA hooks for cinematic captures without pointer lock. */
+declare global {
+  interface Window {
+    __BLACKOPS__?: {
+      start: () => Promise<void>;
+      look: (yaw: number, pitch: number) => void;
+      moveTo: (x: number, y: number, z: number) => void;
+      fire: () => void;
+    };
+  }
+}
+
+window.__BLACKOPS__ = {
+  start: async () => {
+    await game['audio'].unlock();
+    game['menu'].hide();
+    game['hud'].setVisible(true);
+    game['playing'] = true;
+    game['paused'] = false;
+    game['post'].setCamera(game['player'].camera);
+  },
+  look: (yaw: number, pitch: number) => {
+    const p = game['player'];
+    p['yaw'] = yaw;
+    p['pitch'] = pitch;
+    p['syncTransforms']();
+  },
+  moveTo: (x: number, y: number, z: number) => {
+    game['player'].setPosition(x, y, z);
+  },
+  fire: () => {
+    const w = game['weapons'];
+    w['keys'].add('MouseLeft');
+    // One-shot via update path
+    setTimeout(() => w['keys'].delete('MouseLeft'), 80);
+  },
+};
+
 void game;

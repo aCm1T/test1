@@ -46,8 +46,11 @@ export class PostProcessing {
   private readonly noise: NoiseEffect;
   private readonly smaa: SMAAEffect;
   private readonly toneMapping: ToneMappingEffect;
-  private readonly effectPass: EffectPass;
+  private readonly bloomPass: EffectPass;
+  private readonly chromaticPass: EffectPass;
+  private readonly gradingPass: EffectPass;
   private readonly renderPass: RenderPass;
+  private readonly effectPasses: EffectPass[];
 
   private readonly baseBloom: number;
   private readonly baseVignette: number;
@@ -64,7 +67,7 @@ export class PostProcessing {
     options: PostProcessingOptions = {},
   ) {
     this.baseBloom = options.bloomIntensity ?? 0.35;
-    this.baseVignette = options.vignetteDarkness ?? 0.42;
+    this.baseVignette = options.vignetteDarkness ?? 0.25;
     this.baseChromatic = options.chromaticOffset ?? 0.0008;
 
     // Tone mapping is handled by the composer so the HDR bloom path stays linear.
@@ -80,8 +83,8 @@ export class PostProcessing {
 
     this.bloom = new BloomEffect({
       intensity: this.baseBloom,
-      luminanceThreshold: 0.72,
-      luminanceSmoothing: 0.18,
+      luminanceThreshold: 0.55,
+      luminanceSmoothing: 0.2,
       mipmapBlur: true,
       radius: 0.55,
     });
@@ -112,16 +115,20 @@ export class PostProcessing {
       mode: ToneMappingMode.ACES_FILMIC,
     });
 
-    this.effectPass = new EffectPass(
+    // Convolution effects (Bloom, ChromaticAberration) cannot share an EffectPass.
+    this.bloomPass = new EffectPass(camera, this.bloom);
+    this.chromaticPass = new EffectPass(camera, this.chromatic);
+    this.gradingPass = new EffectPass(
       camera,
-      this.bloom,
       this.vignette,
-      this.chromatic,
       this.noise,
       this.smaa,
       this.toneMapping,
     );
-    this.composer.addPass(this.effectPass);
+    this.effectPasses = [this.bloomPass, this.chromaticPass, this.gradingPass];
+    for (const pass of this.effectPasses) {
+      this.composer.addPass(pass);
+    }
 
     this.setSize(
       renderer.domElement.clientWidth || window.innerWidth,
@@ -134,7 +141,9 @@ export class PostProcessing {
    */
   setCamera(camera: Camera): void {
     this.renderPass.mainCamera = camera;
-    this.effectPass.mainCamera = camera;
+    for (const pass of this.effectPasses) {
+      pass.mainCamera = camera;
+    }
   }
 
   setScene(scene: Scene): void {

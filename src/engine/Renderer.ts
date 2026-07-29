@@ -16,7 +16,7 @@ export interface GameRendererOptions {
   fov?: number;
   near?: number;
   far?: number;
-  /** ACES exposure — ~1.05–1.2 reads cinematic for dusk combat. */
+  /** ACES exposure — ~1.35–1.5 reads cinematic for dusk combat. */
   exposure?: number;
   /** Shadow map resolution (square). */
   shadowMapSize?: number;
@@ -33,13 +33,13 @@ export interface EngineRenderContext {
 }
 
 const DEFAULT_SHADOW_MAP_SIZE = 2048;
-const DEFAULT_EXPOSURE = 1.12;
+const DEFAULT_EXPOSURE = 1.4;
 const DEFAULT_FOV = 75;
 const DEFAULT_NEAR = 0.08;
 const DEFAULT_FAR = 420;
 const DEFAULT_MAX_PIXEL_RATIO = 2;
-/** Deep charcoal-blue void — dusk backdrop before fog/lighting. */
-const DEFAULT_CLEAR_COLOR = 0x0a0e14;
+/** Lighter dusk blue-gray — readable urban twilight backdrop. */
+const DEFAULT_CLEAR_COLOR = 0x1a2433;
 
 /**
  * WebGL renderer bootstrap for BLACKOPS: FRONTLINE.
