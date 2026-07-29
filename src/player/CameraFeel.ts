@@ -163,10 +163,15 @@ export class CameraFeel {
 
     this.camera.rotation.set(basePitch + this.feelPitch, 0, roll);
 
-    // ADS FOV lerp 75 → 55
-    const targetFov = ads ? this.adsFov : this.hipFov;
+    // ADS / sprint FOV — hip 75, ADS 55, sprint adds a slight punch to 82
+    const targetFov = ads
+      ? this.adsFov
+      : sprinting && moving
+        ? this.hipFov + 7
+        : this.hipFov;
     const prevFov = this.camera.fov;
-    this.camera.fov = MathUtils.damp(this.camera.fov, targetFov, ads ? 14 : 10, clampedDt);
+    const fovSpeed = ads ? 16 : sprinting ? 8 : 11;
+    this.camera.fov = MathUtils.damp(this.camera.fov, targetFov, fovSpeed, clampedDt);
     if (Math.abs(this.camera.fov - prevFov) > 0.01) {
       this.camera.updateProjectionMatrix();
     }

@@ -66,9 +66,9 @@ export class PostProcessing {
     camera: Camera,
     options: PostProcessingOptions = {},
   ) {
-    this.baseBloom = options.bloomIntensity ?? 0.35;
-    this.baseVignette = options.vignetteDarkness ?? 0.25;
-    this.baseChromatic = options.chromaticOffset ?? 0.0008;
+    this.baseBloom = options.bloomIntensity ?? 0.38;
+    this.baseVignette = options.vignetteDarkness ?? 0.24;
+    this.baseChromatic = options.chromaticOffset ?? 0.0007;
 
     // Tone mapping is handled by the composer so the HDR bloom path stays linear.
     renderer.toneMapping = NoToneMapping;
@@ -83,10 +83,10 @@ export class PostProcessing {
 
     this.bloom = new BloomEffect({
       intensity: this.baseBloom,
-      luminanceThreshold: 0.55,
-      luminanceSmoothing: 0.2,
+      luminanceThreshold: 0.62,
+      luminanceSmoothing: 0.18,
       mipmapBlur: true,
-      radius: 0.55,
+      radius: 0.5,
     });
 
     this.vignette = new VignetteEffect({
@@ -108,7 +108,7 @@ export class PostProcessing {
     this.noise.blendMode.opacity.value = options.noiseOpacity ?? 0.045;
 
     this.smaa = new SMAAEffect({
-      preset: SMAAPreset.HIGH,
+      preset: SMAAPreset.MEDIUM,
     });
 
     this.toneMapping = new ToneMappingEffect({

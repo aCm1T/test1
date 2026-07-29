@@ -47,6 +47,8 @@ class Game {
   private readonly tmp = new Vector3();
   private lastWeaponName = '';
   private animId = 0;
+  private lastAliveCount = -1;
+  private waveToastTimer = 0;
 
   constructor() {
     const app = document.getElementById('app');
@@ -55,9 +57,10 @@ class Game {
 
     this.renderer = new GameRenderer({
       container: app,
-      exposure: 1.55,
-      shadowMapSize: 2048,
+      exposure: 1.48,
+      shadowMapSize: 1536,
       clearColor: 0x1a2433,
+      maxPixelRatio: 1.75,
     });
 
     this.environment = setupEnvironment(
@@ -66,21 +69,20 @@ class Game {
     );
 
     this.lighting = setupLighting(this.renderer.scene, {
-      mapRadius: 42,
-      shadowMapSize: 2048,
-      fogDensity: 0.0036,
+      mapRadius: 40,
+      shadowMapSize: 1536,
       fogColor: 0x3a4450,
-      hemiIntensity: 2.3,
-      sunIntensity: 2.55,
-      moonIntensity: 0.55,
+      hemiIntensity: 2.15,
+      sunIntensity: 2.45,
+      moonIntensity: 0.5,
     });
 
     this.level = new Level(this.renderer.scene);
     // Clear intersection spawn — avoid prop/car overlap that flings the player.
     this.level.playerSpawn.set(0, 0, 0);
-    // Guaranteed hostile in the opening frame (screenshot / first-second readability).
-    this.level.enemySpawns.unshift(new Vector3(3.5, 0, -8));
-    this.level.enemySpawns.unshift(new Vector3(-4, 0, -10));
+    // Opening hostiles ahead on +Z (player yaw = PI looks down +Z).
+    this.level.enemySpawns.unshift(new Vector3(4.0, 0, 11));
+    this.level.enemySpawns.unshift(new Vector3(-3.5, 0, 9));
 
     this.player = new PlayerController({
       position: this.level.playerSpawn.clone(),
@@ -117,6 +119,10 @@ class Game {
             weapon: this.weapons.getActiveDef().name,
             headshot: bodyPart === 'head',
           });
+          // Light combat sustain — small heal/armor on eliminate
+          this.player.heal(bodyPart === 'head' ? 18 : 10);
+          this.player.addArmor(bodyPart === 'head' ? 8 : 4);
+          this.audio.playHitMarker(true);
         },
         onReload: () => this.audio.playReload(),
       },
@@ -345,15 +351,16 @@ class Game {
     if (this.playing && !this.paused && !this.menu.isVisible()) {
       this.updateGameplay(dt);
     } else if (!this.playing) {
-      // Idle menu camera drift using renderer camera
+      // Idle menu camera — orbit the intersection for a cinematic title backdrop
       const t = this.clock.getElapsed();
       const cam = this.renderer.camera;
+      const radius = 16 + Math.sin(t * 0.11) * 2;
       cam.position.set(
-        Math.sin(t * 0.08) * 18,
-        9 + Math.sin(t * 0.15) * 0.6,
-        22 + Math.cos(t * 0.07) * 8,
+        Math.sin(t * 0.09) * radius,
+        6.5 + Math.sin(t * 0.13) * 0.8,
+        Math.cos(t * 0.09) * radius * 0.85 + 4,
       );
-      cam.lookAt(0, 2.5, 0);
+      cam.lookAt(0, 2.2, 4);
       this.post.setCamera(cam);
     }
 
@@ -367,6 +374,18 @@ class Game {
 
     this.player.update(dt, this.level.colliders);
     this.enemies.update(dt, this.player.getPositionRef());
+
+    const alive = this.enemies.getAlive().length;
+    if (this.lastAliveCount === 0 && alive > 0) {
+      this.hud.showInteract('INCOMING — HOSTILES REINFORCING');
+      this.waveToastTimer = 2.4;
+      this.audio.playUIClick();
+    }
+    this.lastAliveCount = alive;
+    if (this.waveToastTimer > 0) {
+      this.waveToastTimer -= dt;
+      if (this.waveToastTimer <= 0) this.hud.showInteract(null);
+    }
 
     const hitscanTargets = asHitscanEnemies(this.enemies.getAlive());
     this.weapons.update(dt, this.renderer.scene, hitscanTargets);
@@ -407,14 +426,16 @@ class Game {
     });
     this.hud.setCompassYaw(this.player.getYaw());
 
-    const spread = this.weapons.isADS()
-      ? 3
-      : this.player.isSprinting()
-        ? 18
-        : this.player.isMoving()
-          ? 10
-          : 5;
-    this.hud.setCrosshairSpread(spread);
+    const def = this.weapons.getActiveDef();
+    const baseSpreadPx = this.weapons.isADS()
+      ? Math.max(2, def.adsSpread * 900)
+      : Math.max(5, def.hipSpread * 700);
+    const moveAdd = this.player.isSprinting()
+      ? 12
+      : this.player.isMoving()
+        ? 6
+        : 0;
+    this.hud.setCrosshairSpread(baseSpreadPx + moveAdd);
 
     const dmgIntensity = MathUtilsClamp(
       1 - this.player.health / this.player.maxHealth,
