@@ -401,6 +401,13 @@ export class PlayerController {
     this.wasGrounded = this.grounded;
     this.moveAndCollide(clampedDt, colliders);
 
+    // Safety net — never fall through the arena into the sky-dome void.
+    if (this.position.y < -0.5) {
+      this.position.y = 0;
+      this.velocity.y = 0;
+      this.grounded = true;
+    }
+
     if (this.grounded && !this.wasGrounded) {
       this.justLanded = true;
       this.landImpact = MathUtils.clamp(this.fallSpeedAtImpact / 18, 0, 1.4);
@@ -665,6 +672,9 @@ export class PlayerController {
       if (axis === 'x') {
         const overlapLeft = this._max.x - c.min.x;
         const overlapRight = c.max.x - this._min.x;
+        const pen = Math.min(overlapLeft, overlapRight);
+        // Ignore pathological deep embeds (spawn-inside-geo) — skip rather than fling.
+        if (pen > 1.25) continue;
         if (overlapLeft < overlapRight) {
           this.position.x -= overlapLeft;
         } else {
@@ -676,6 +686,8 @@ export class PlayerController {
       } else if (axis === 'z') {
         const overlapNear = this._max.z - c.min.z;
         const overlapFar = c.max.z - this._min.z;
+        const pen = Math.min(overlapNear, overlapFar);
+        if (pen > 1.25) continue;
         if (overlapNear < overlapFar) {
           this.position.z -= overlapNear;
         } else {
@@ -685,14 +697,17 @@ export class PlayerController {
         result = 'wall';
         this.getAABB(this._min, this._max);
       } else {
-        const overlapBottom = this._max.y - c.min.y;
+        // Y axis — velocity decides floor vs ceiling. Never use raw overlap size:
+        // a standing player always penetrates "more from below" on thin floor slabs.
         const overlapTop = c.max.y - this._min.y;
-        if (overlapBottom < overlapTop) {
+        const overlapBottom = this._max.y - c.min.y;
+
+        if (this.velocity.y > 0.05) {
           this.position.y -= overlapBottom;
-          result = 'floor';
-        } else {
-          this.position.y += overlapTop;
           result = 'ceiling';
+        } else {
+          this.position.y += Math.max(0, overlapTop);
+          result = 'floor';
         }
         this.getAABB(this._min, this._max);
       }

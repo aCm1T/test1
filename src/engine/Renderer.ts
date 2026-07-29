@@ -149,6 +149,7 @@ export class GameRenderer {
       depth: true,
       alpha: false,
       logarithmicDepthBuffer: false,
+      preserveDrawingBuffer: true,
       ...options.rendererParameters,
     });
 

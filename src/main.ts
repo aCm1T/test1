@@ -76,18 +76,18 @@ class Game {
     });
 
     this.level = new Level(this.renderer.scene);
-    // Open intersection spawn — looking north into the cross-street.
-    this.level.playerSpawn.set(0, 0, 12);
+    // Clear intersection spawn — avoid prop/car overlap that flings the player.
+    this.level.playerSpawn.set(0, 0, 0);
     // Guaranteed hostile in the opening frame (screenshot / first-second readability).
-    this.level.enemySpawns.unshift(new Vector3(1.8, 0, 4.5));
-    this.level.enemySpawns.unshift(new Vector3(-2.2, 0, 6.5));
+    this.level.enemySpawns.unshift(new Vector3(3.5, 0, -8));
+    this.level.enemySpawns.unshift(new Vector3(-4, 0, -10));
 
     this.player = new PlayerController({
       position: this.level.playerSpawn.clone(),
       sensitivity: 0.00215,
     });
-    // Slight look-down so asphalt + crosswalk fill the opening frame (not sky nadir).
-    this.player.setLook(0, -0.12);
+    // Look north down the street with slight dip so asphalt fills the frame.
+    this.player.setLook(Math.PI, -0.18);
     this.renderer.scene.add(this.player.pivot);
 
     // Gameplay uses the player camera; keep renderer camera as unused fallback.
@@ -461,6 +461,13 @@ declare global {
       look: (yaw: number, pitch: number) => void;
       moveTo: (x: number, y: number, z: number) => void;
       fire: () => void;
+      debug: () => {
+        pos: { x: number; y: number; z: number };
+        grounded: boolean;
+        colliders: number;
+        yaw: number;
+        pitch: number;
+      };
     };
   }
 }
@@ -475,19 +482,25 @@ window.__BLACKOPS__ = {
     game['post'].setCamera(game['player'].camera);
   },
   look: (yaw: number, pitch: number) => {
-    const p = game['player'];
-    p['yaw'] = yaw;
-    p['pitch'] = pitch;
-    p['syncTransforms']();
+    game['player'].setLook(yaw, pitch);
   },
   moveTo: (x: number, y: number, z: number) => {
-    game['player'].setPosition(x, y, z);
+    game['player'].setPosition(x, Math.max(0, y), z);
   },
   fire: () => {
-    const w = game['weapons'];
-    w['keys'].add('MouseLeft');
-    // One-shot via update path
-    setTimeout(() => w['keys'].delete('MouseLeft'), 80);
+    const w = game['weapons'] as unknown as { keys: Set<string> };
+    w.keys.add('MouseLeft');
+    setTimeout(() => w.keys.delete('MouseLeft'), 80);
+  },
+  debug: () => {
+    const p = game['player'];
+    return {
+      pos: p.getPosition(),
+      grounded: p.isGrounded(),
+      colliders: game['level'].colliders.length,
+      yaw: p.getYaw(),
+      pitch: p.getPitch(),
+    };
   },
 };
 

@@ -14,7 +14,7 @@ const HALF = ARENA * 0.5;
 export class Level {
   readonly group = new THREE.Group();
   readonly colliders: AABB[] = [];
-  readonly playerSpawn = new THREE.Vector3(0, 0, 12);
+  readonly playerSpawn = new THREE.Vector3(0, 0, 0);
   readonly enemySpawns: THREE.Vector3[] = [];
   readonly coverNodes: THREE.Vector3[] = [];
 
@@ -123,30 +123,39 @@ export class Level {
     });
     ground.name = 'GroundAsphalt';
     ground.receiveShadow = true;
-    // Extra large planar deck so sky nadir never peeks at map edges / look-down.
+
+    // Screenshot-proof street deck — MeshBasic so fog/PBR/shadows can't erase it.
     const deckGeo = new THREE.PlaneGeometry(ARENA * 2.2, ARENA * 2.2);
     this.disposables.push(deckGeo);
-    const deck = new THREE.Mesh(deckGeo, asphalt);
+    const deckMat = new THREE.MeshBasicMaterial({
+      map: this.kit.asphalt,
+      color: 0xc4b8a4,
+      fog: true,
+    });
+    const deck = new THREE.Mesh(deckGeo, deckMat);
     deck.rotation.x = -Math.PI * 0.5;
-    deck.position.set(0, 0.02, 0);
-    deck.receiveShadow = true;
+    deck.position.set(0, 0.04, 0);
+    deck.receiveShadow = false;
     deck.castShadow = false;
+    deck.frustumCulled = false;
     deck.name = 'GroundAsphaltDeck';
     this.group.add(deck);
-    // Outer skirt — darker warm asphalt so horizon doesn't flash sky-blue.
-    const skirtGeo = new THREE.PlaneGeometry(ARENA * 4.5, ARENA * 4.5);
+
+    // Outer skirt
+    const skirtGeo = new THREE.PlaneGeometry(ARENA * 5, ARENA * 5);
     this.disposables.push(skirtGeo);
-    const skirtMat = asphalt.clone();
-    skirtMat.color = new THREE.Color(0xe8dcc8);
-    skirtMat.emissive = new THREE.Color(0x18140e);
-    skirtMat.emissiveIntensity = 0.08;
+    const skirtMat = new THREE.MeshBasicMaterial({
+      color: 0x5a5044,
+      fog: true,
+    });
     const skirt = new THREE.Mesh(skirtGeo, skirtMat);
     skirt.rotation.x = -Math.PI * 0.5;
-    skirt.position.set(0, -0.02, 0);
-    skirt.receiveShadow = true;
-    skirt.castShadow = false;
+    skirt.position.set(0, 0.01, 0);
+    skirt.frustumCulled = false;
     skirt.name = 'GroundAsphaltSkirt';
     this.group.add(skirt);
+
+    // Visible road grid removed — MeshBasic deck is the readable street surface.
 
     // Sidewalk strips along N-S street (X corridors)
     const swH = 0.2;
@@ -781,7 +790,7 @@ export class Level {
     this.sandbagWall(10, 8, 3.2, -0.7);
 
     // Concrete jersey barriers
-    this.barrier(2, 0, 10, 0);
+    this.barrier(6, 0, 14, 0);
     this.barrier(-2.5, 0, -11, 0.1);
     this.barrier(10, 0, -12, Math.PI * 0.5);
     this.barrier(-11, 0, 8, Math.PI * 0.48);
@@ -896,7 +905,7 @@ export class Level {
   // ── wrecked cars ─────────────────────────────────────────────────────
 
   private buildVehicles(): void {
-    this.wreckedCar(4, 12, 0.4);
+    this.wreckedCar(10, 16, 0.4);
     this.wreckedCar(-8, -4, -0.9);
     this.wreckedCar(18, -10, 1.2);
     this.wreckedCar(-16, 6, 0.25);

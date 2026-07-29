@@ -1,7 +1,7 @@
 import {
   Color,
   DirectionalLight,
-  FogExp2,
+  Fog,
   HemisphereLight,
   PointLight,
   Scene,
@@ -146,9 +146,9 @@ export function setupLighting(
     fills.push(pl);
   }
 
-  // --- Atmospheric fog (haze at 40–60u, not a black hole) ---
+  // --- Atmospheric fog: linear so mid-range street stays readable ---
   // Background is owned by setupEnvironment dusk sky texture.
-  scene.fog = new FogExp2(fogColor.getHex(), options.fogDensity ?? 0.0045);
+  scene.fog = new Fog(fogColor.getHex(), 32, 120);
 
   const dispose = (): void => {
     scene.remove(hemi);
