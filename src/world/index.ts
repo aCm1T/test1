@@ -20,3 +20,60 @@ export {
 
 export { Level } from './Level';
 export type { AABB } from './Level';
+export {
+  DevelopmentPropLayer,
+  DEVELOPMENT_BARREL_URL,
+  DEVELOPMENT_BARREL_PLACEMENTS,
+  DEVELOPMENT_CRATE_PLACEMENTS,
+  DEVELOPMENT_UTILITY_BOX_PLACEMENTS,
+  DEVELOPMENT_PROP_DESCRIPTORS,
+  type DevelopmentPropDescriptor,
+  type DevelopmentPropLayerOptions,
+  type DevelopmentPropLayerState,
+  type DevelopmentPropLoadReport,
+  type DevelopmentPropPlacement,
+} from './DevelopmentPropLayer';
+export {
+  DevelopmentSkylineBackdrop,
+  DEVELOPMENT_SKYLINE_HAZE,
+  applyAtmosphericHaze,
+  DEVELOPMENT_SKYLINE_BACKDROP_URL,
+  DEVELOPMENT_SKYLINE_CROP_BOTTOM,
+  DEVELOPMENT_SKYLINE_LAYOUT,
+  createSkylineArcGeometry,
+  type DevelopmentSkylineBackdropLoadReport,
+  type DevelopmentSkylineBackdropOptions,
+  type DevelopmentSkylineBackdropState,
+} from './DevelopmentSkylineBackdrop';
+export {
+  EnvironmentAssembler,
+  type EnvironmentAssemblyOptions,
+  type EnvironmentAssemblyResult,
+  type EnvironmentModuleKind,
+  type EnvironmentInstancePlacement,
+  type EnvironmentModulePlacement,
+  type AuthoredStaticCollider,
+  type AuthoredNavigationAnnotations,
+  type AuthoredEnvironmentRenderStats,
+} from './EnvironmentAssembler';
+export {
+  REQUIRED_SOURCE_GROUPS,
+  MIN_REFERENCE_CAPTURES,
+  MAX_COMPRESSED_PAYLOAD_BYTES,
+  NIGHTGLASS_ROUTE_ASSET_IDS,
+  NIGHTGLASS_VIEWMODEL_ASSET_ID,
+  NIGHTGLASS_CHARACTER_ASSET_IDS,
+  NIGHTGLASS_LIGHTING_ASSET_IDS,
+  NIGHTGLASS_TEXTURE_ASSET_IDS,
+  NIGHTGLASS_LIGHTMAP_ASSET_IDS,
+  NIGHTGLASS_AUDIO_ASSET_IDS,
+  NIGHTGLASS_RUNTIME_ASSET_IDS,
+  NIGHTGLASS_ENVIRONMENT_CAPABILITIES,
+  NIGHTGLASS_VIEWMODEL_CAPABILITIES,
+  NIGHTGLASS_CHARACTER_CAPABILITIES,
+  NIGHTGLASS_AUDIO_CAPABILITIES,
+  validateNightglassAssetContract,
+  type AssetContractReport,
+  type RequiredSourceGroup,
+  type SourceAssetMetadata,
+} from './AssetContract';

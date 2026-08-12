@@ -1,0 +1,28 @@
+{
+  "version": "1",
+  "baseUrl": "/assets",
+  "assets": [
+    {
+      "id": "frontline-menu-background",
+      "kind": "image",
+      "url": "frontline-menu-bg.png",
+      "preload": true,
+      "bytes": 2063355,
+      "license": {
+        "name": "Original AI-generated project asset",
+        "url": "ASSET-LICENSES.md"
+      }
+    },
+    {
+      "id": "dev-wet-asphalt-v1",
+      "kind": "image",
+      "url": "dev-wet-asphalt-v1.png",
+      "preload": false,
+      "bytes": 3547018,
+      "license": {
+        "name": "Original AI-generated development-only project asset",
+        "url": "ASSET-LICENSES.md"
+      }
+    }
+  ]
+}

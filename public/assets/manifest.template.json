@@ -1,0 +1,167 @@
+{
+  "version": "1",
+  "baseUrl": "/assets",
+  "comment": "Schema guide only. manifest.json must contain every ID below; placeholders and missing runtime files fail npm run qa:assets.",
+  "contract": {
+    "routeIds": [
+      "route-spawn-lod0", "route-spawn-lod1", "route-spawn-lod2",
+      "route-intersection-lod0", "route-intersection-lod1", "route-intersection-lod2",
+      "route-warehouse-lod0", "route-warehouse-lod1", "route-warehouse-lod2",
+      "route-props-lod0", "route-props-lod1", "route-props-lod2"
+    ],
+    "viewmodelIds": ["viewmodel-rifle"],
+    "characterIds": ["hostile-archetype-a", "hostile-archetype-b"],
+    "lightingAndTextureIds": [
+      "dusk-hdr", "street-reflection-probe", "warehouse-reflection-probe",
+      "hero-normal", "hero-orm", "hero-albedo", "hero-emissive",
+      "route-spawn-lightmap", "route-intersection-lightmap", "route-warehouse-lightmap"
+    ],
+    "audioIds": [
+      "weapon-ar-fire", "weapon-ar-mechanical", "weapon-reload",
+      "footsteps-concrete", "footsteps-dirt", "footsteps-metal",
+      "impact-concrete", "ambience-dusk", "ui-confirm", "indoor-tail", "outdoor-tail"
+    ],
+    "referenceCount": 12,
+    "compressedRuntimeByteLimit": 314572800,
+    "everyRuntimeEntryMustSetRequired": true,
+    "binaryInspection": {
+      "heroGlb": ["EXT_meshopt_compression", "POSITION", "TEXCOORD_0", "TEXCOORD_1", "TANGENT", "pbrMetallicRoughness"],
+      "routePropsGlb": ["EXT_mesh_gpu_instancing"],
+      "viewmodelGlb": ["skin", "idle", "fire", "ads", "sprint", "reload", "melee", "ADS_RETICLE"],
+      "characterGlb": ["skin", "idle", "locomotion", "reaction", "firing", "reload", "death", "cover"]
+    }
+  },
+  "assets": [
+    {
+      "id": "route-spawn-lod0",
+      "kind": "gltf",
+      "url": "environment/route-spawn.lod0.meshopt.glb",
+      "bytes": 1,
+      "required": true,
+      "metadata": {
+        "sourceGroup": "environment",
+        "sourceRecord": "REPLACE_WITH_ENVIRONMENT_SOURCE_RECORD",
+        "licenseRecord": "REPLACE_WITH_ENVIRONMENT_LICENSE_RECORD",
+        "compressed": "meshopt-glb",
+        "capabilities": [
+          "street", "intersection", "warehouse", "cover", "debris", "lamps",
+          "vehicles", "decals", "emissive-windows", "baked-lightmap", "baked-ao",
+          "collision", "navigation-graph", "cover-slots"
+        ],
+        "mesh": { "uv0": true, "uv1": true, "tangents": true, "pbrMetalRough": true }
+      },
+      "license": { "name": "REPLACE_WITH_DISTRIBUTION_LICENSE" }
+    },
+    {
+      "id": "viewmodel-rifle",
+      "kind": "gltf",
+      "url": "viewmodel/rifle-arms.meshopt.glb",
+      "bytes": 1,
+      "required": true,
+      "metadata": {
+        "sourceGroup": "viewmodel",
+        "sourceRecord": "REPLACE_WITH_VIEWMODEL_SOURCE_RECORD",
+        "licenseRecord": "REPLACE_WITH_VIEWMODEL_LICENSE_RECORD",
+        "compressed": "meshopt-glb",
+        "capabilities": ["rigged-rifle", "rigged-arms", "idle", "fire", "ads", "sprint", "reload", "melee", "ads-reticle-marker"],
+        "mesh": { "uv0": true, "uv1": true, "tangents": true, "pbrMetalRough": true }
+      },
+      "license": { "name": "REPLACE_WITH_DISTRIBUTION_LICENSE" }
+    },
+    {
+      "id": "hostile-archetype-a",
+      "kind": "gltf",
+      "url": "characters/hostile-a.meshopt.glb",
+      "bytes": 1,
+      "required": true,
+      "metadata": {
+        "sourceGroup": "characters",
+        "sourceRecord": "REPLACE_WITH_CHARACTER_SOURCE_RECORD",
+        "licenseRecord": "REPLACE_WITH_CHARACTER_LICENSE_RECORD",
+        "compressed": "meshopt-glb",
+        "capabilities": ["rigged", "idle", "locomotion", "reaction", "firing", "reload", "death", "cover"],
+        "mesh": { "uv0": true, "uv1": true, "tangents": true, "pbrMetalRough": true }
+      },
+      "license": { "name": "REPLACE_WITH_DISTRIBUTION_LICENSE" }
+    },
+    {
+      "id": "hero-normal",
+      "kind": "ktx2",
+      "url": "environment/hero-normal.uastc.ktx2",
+      "bytes": 1,
+      "required": true,
+      "metadata": {
+        "sourceGroup": "environment",
+        "sourceRecord": "REPLACE_WITH_TEXTURE_SOURCE_RECORD",
+        "licenseRecord": "REPLACE_WITH_TEXTURE_LICENSE_RECORD",
+        "compressed": "ktx2-uastc",
+        "textureSemantic": "normal"
+      },
+      "license": { "name": "REPLACE_WITH_DISTRIBUTION_LICENSE" }
+    },
+    {
+      "id": "hero-albedo",
+      "kind": "ktx2",
+      "url": "environment/hero-albedo.etc1s.ktx2",
+      "bytes": 1,
+      "required": true,
+      "metadata": {
+        "sourceGroup": "environment",
+        "sourceRecord": "REPLACE_WITH_TEXTURE_SOURCE_RECORD",
+        "licenseRecord": "REPLACE_WITH_TEXTURE_LICENSE_RECORD",
+        "compressed": "ktx2-etc1s",
+        "textureSemantic": "albedo"
+      },
+      "license": { "name": "REPLACE_WITH_DISTRIBUTION_LICENSE" }
+    },
+    {
+      "id": "route-spawn-lightmap",
+      "kind": "ktx2",
+      "url": "environment/route-spawn-lightmap.etc1s.ktx2",
+      "bytes": 1,
+      "required": true,
+      "metadata": {
+        "sourceGroup": "environment",
+        "sourceRecord": "REPLACE_WITH_LIGHTMAP_SOURCE_RECORD",
+        "licenseRecord": "REPLACE_WITH_LIGHTMAP_LICENSE_RECORD",
+        "compressed": "ktx2-etc1s",
+        "textureSemantic": "lightmap"
+      },
+      "license": { "name": "REPLACE_WITH_DISTRIBUTION_LICENSE" }
+    },
+    {
+      "id": "weapon-ar-fire",
+      "kind": "audio",
+      "url": "audio/weapon-ar-fire.ogg",
+      "bytes": 1,
+      "required": true,
+      "metadata": {
+        "sourceGroup": "audio",
+        "sourceRecord": "REPLACE_WITH_AUDIO_SOURCE_RECORD",
+        "licenseRecord": "REPLACE_WITH_AUDIO_LICENSE_RECORD",
+        "compressed": "audio",
+        "capabilities": ["weapon-layers"]
+      },
+      "license": { "name": "REPLACE_WITH_DISTRIBUTION_LICENSE" }
+    },
+    {
+      "id": "reference-01",
+      "kind": "image",
+      "url": "references/reference-01.png",
+      "metadata": {
+        "sourceGroup": "references",
+        "sourceRecord": "REPLACE_WITH_REFERENCE_SOURCE_RECORD",
+        "licenseRecord": "REPLACE_WITH_REFERENCE_LICENSE_RECORD",
+        "reference": {
+          "fov": 90,
+          "width": 1920,
+          "height": 1080,
+          "sceneType": "spawn",
+          "captureScenario": "spawn",
+          "crop": { "x": 0, "y": 0, "width": 1920, "height": 1080 }
+        }
+      },
+      "license": { "name": "REPLACE_WITH_REFERENCE_LICENSE" }
+    }
+  ]
+}

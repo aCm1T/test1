@@ -4,6 +4,7 @@ import {
   PerspectiveCamera,
   Vector3,
 } from 'three';
+import type { InputFrame, PhysicsWorld } from '../simulation';
 
 /** Axis-aligned world collider used for FPS ground/wall collision. */
 export interface WorldCollider {
@@ -26,6 +27,22 @@ export interface PlayerControllerOptions {
   aspect?: number;
 }
 
+export interface PlayerStateSnapshot {
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  health: number;
+  armor: number;
+  yaw: number;
+  pitch: number;
+  alive: boolean;
+  crouching: boolean;
+  grounded: boolean;
+  sliding: boolean;
+  slideTimer: number;
+  mantleCooldown: number;
+  eyeHeight: number;
+}
+
 const STAND_EYE = 1.62;
 const CROUCH_EYE = 1.05;
 const STAND_HALF_HEIGHT = 0.9;
@@ -40,6 +57,11 @@ const AIR_ACCEL = 18;
 const GROUND_FRICTION = 14;
 const AIR_FRICTION = 1.2;
 const SPRINT_THRESHOLD = 0.35;
+const SLIDE_DURATION = 0.68;
+const SLIDE_START_SPEED = 10.2;
+const MANTLE_REACH = 0.78;
+const MANTLE_MIN_HEIGHT = 0.42;
+const MANTLE_MAX_HEIGHT = 1.28;
 
 /**
  * Pointer-lock FPS player controller with COD-style movement feel.
@@ -52,6 +74,7 @@ export class PlayerController {
 
   /** Mouse look sensitivity (radians per pixel). */
   sensitivity: number;
+  adsSensitivityMultiplier = 0.8;
 
   health: number;
   armor: number;
@@ -64,13 +87,35 @@ export class PlayerController {
   jumpVelocity: number;
 
   private readonly position = new Vector3(0, 0, 0);
+  private readonly previousPosition = new Vector3(0, 0, 0);
   private readonly velocity = new Vector3();
   private readonly wishDir = new Vector3();
   private readonly eyeWorld = new Vector3();
   private readonly _min = new Vector3();
   private readonly _max = new Vector3();
+  private physicsWorld: PhysicsWorld | null = null;
+  private physicsBodyId: string | null = null;
+  private physicsCenterOffset = STAND_HALF_HEIGHT;
+  private sessionInput: Readonly<InputFrame> | null = null;
+  private pendingLookX = 0;
+  private pendingLookY = 0;
+  private pendingFirePressed = false;
+  private pendingAimPressed = false;
+  private pendingJump = false;
+  private pendingReload = false;
+  private pendingGrenade = false;
+  private pendingInteract = false;
+  private pendingWeaponSlot: 1 | 2 | 3 | undefined;
+  private pendingWeaponCycle: -1 | 0 | 1 = 0;
+  private previousSessionCrouch = false;
 
   private readonly keys = new Set<string>();
+  /**
+   * Keyboard codes still physically held across a pause unlock. clearInput wipes
+   * `keys`, and the OS will not re-fire keydown until release — keyup/keydown
+   * while suspended keep this set honest so resume can resyncHeldKeys.
+   */
+  private suspendedHeldKeys: Set<string> | null = null;
   private pointerLocked = false;
   private disposeFns: Array<() => void> = [];
   private attachElement: HTMLElement | null = null;
@@ -80,6 +125,10 @@ export class PlayerController {
   private halfHeight = STAND_HALF_HEIGHT;
   private crouching = false;
   private wantCrouch = false;
+  private jumpPressed = false;
+  private sliding = false;
+  private slideTimer = 0;
+  private mantleCooldown = 0;
   private grounded = false;
   private wasGrounded = false;
   private justLanded = false;
@@ -92,6 +141,13 @@ export class PlayerController {
   /** Last damage taken (for CameraFeel shake hooks). */
   lastDamageAmount = 0;
   private damagePulse = 0;
+  /**
+   * Traversal feedback latches. These are consumed rather than reset per tick so
+   * that a slide or mantle triggered from the standalone DOM path is still
+   * observable by presentation, which runs later in the frame.
+   */
+  private slideStartSpeed = 0;
+  private mantleHeight = 0;
 
   constructor(options: PlayerControllerOptions = {}) {
     this.maxHealth = options.maxHealth ?? 100;
@@ -108,6 +164,7 @@ export class PlayerController {
     if (options.position) {
       this.position.copy(options.position);
     }
+    this.previousPosition.copy(this.position);
 
     this.pivot = new Object3D();
     this.pivot.name = 'PlayerPivot';
@@ -181,12 +238,102 @@ export class PlayerController {
 
   setPosition(x: number, y: number, z: number): void {
     this.position.set(x, y, z);
+    this.previousPosition.copy(this.position);
     this.velocity.set(0, 0, 0);
+    if (this.physicsWorld && this.physicsBodyId) {
+      this.physicsWorld.teleportCharacter?.(this.physicsBodyId, {
+        x,
+        y: y + this.physicsCenterOffset,
+        z,
+      });
+    }
     this.syncTransforms();
+  }
+
+  /** Switch collision authority from legacy development AABBs to PhysicsWorld. */
+  setPhysicsWorld(physicsWorld: PhysicsWorld | null, bodyId = 'player'): void {
+    this.physicsWorld = physicsWorld;
+    this.physicsBodyId = physicsWorld ? bodyId : null;
+    if (physicsWorld && this.physicsBodyId) {
+      this.resizePhysicsCapsule(this.halfHeight);
+      physicsWorld.teleportCharacter?.(this.physicsBodyId, {
+        x: this.position.x,
+        y: this.position.y + this.physicsCenterOffset,
+        z: this.position.z,
+      });
+    }
   }
 
   getVelocity(): Vector3 {
     return this.velocity.clone();
+  }
+
+  /** Applies visual-only fixed-step interpolation without changing simulation state. */
+  applyRenderInterpolation(alpha: number): void {
+    this.pivot.position.lerpVectors(
+      this.previousPosition,
+      this.position,
+      MathUtils.clamp(alpha, 0, 1),
+    );
+  }
+
+  snapshotState(): PlayerStateSnapshot {
+    return {
+      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+      velocity: { x: this.velocity.x, y: this.velocity.y, z: this.velocity.z },
+      health: this.health,
+      armor: this.armor,
+      yaw: this.yaw,
+      pitch: this.pitch,
+      alive: this.alive,
+      crouching: this.crouching,
+      grounded: this.grounded,
+      sliding: this.sliding,
+      slideTimer: this.slideTimer,
+      mantleCooldown: this.mantleCooldown,
+      eyeHeight: this.eyeHeight,
+    };
+  }
+
+  restoreState(snapshot: PlayerStateSnapshot): void {
+    this.clearInput();
+    this.position.set(snapshot.position.x, snapshot.position.y, snapshot.position.z);
+    this.previousPosition.copy(this.position);
+    this.velocity.set(snapshot.velocity.x, snapshot.velocity.y, snapshot.velocity.z);
+    this.health = MathUtils.clamp(snapshot.health, 0, this.maxHealth);
+    this.armor = MathUtils.clamp(snapshot.armor, 0, this.maxArmor);
+    this.alive = snapshot.alive;
+    this.crouching = snapshot.crouching;
+    this.wantCrouch = snapshot.crouching;
+    // clearInput zeros the crouch edge latch; mirror restored pose so a held
+    // crouch on the next session frame does not re-fire startSlide.
+    this.previousSessionCrouch = snapshot.crouching;
+    this.eyeHeight = MathUtils.clamp(
+      snapshot.eyeHeight,
+      Math.min(CROUCH_EYE, STAND_EYE),
+      Math.max(CROUCH_EYE, STAND_EYE),
+    );
+    this.targetEyeHeight = snapshot.crouching ? CROUCH_EYE : STAND_EYE;
+    this.halfHeight = snapshot.crouching ? CROUCH_HALF_HEIGHT : STAND_HALF_HEIGHT;
+    this.resizePhysicsCapsule(this.halfHeight);
+    this.yaw = snapshot.yaw;
+    this.pitch = MathUtils.clamp(snapshot.pitch, -Math.PI * 0.49, Math.PI * 0.49);
+    this.grounded = snapshot.grounded;
+    this.wasGrounded = snapshot.grounded;
+    this.sliding = snapshot.sliding && snapshot.crouching;
+    this.slideTimer = Math.max(0, snapshot.slideTimer);
+    this.mantleCooldown = Math.max(0, snapshot.mantleCooldown);
+    this.justLanded = false;
+    this.landImpact = 0;
+    this.fallSpeedAtImpact = 0;
+    if (this.physicsWorld && this.physicsBodyId) {
+      this.physicsWorld.teleportCharacter?.(this.physicsBodyId, {
+        x: this.position.x,
+        y: this.position.y + this.physicsCenterOffset,
+        z: this.position.z,
+      });
+    }
+    this.syncTransforms();
   }
 
   getEyePosition(): Vector3 {
@@ -266,11 +413,29 @@ export class PlayerController {
     return v;
   }
 
+  /** Entry speed of a slide that began since the last call, else 0. */
+  consumeSlideStart(): number {
+    const v = this.slideStartSpeed;
+    this.slideStartSpeed = 0;
+    return v;
+  }
+
+  /** Ledge height of a mantle completed since the last call, else 0. */
+  consumeMantle(): number {
+    const v = this.mantleHeight;
+    this.mantleHeight = 0;
+    return v;
+  }
+
   isSprinting(): boolean {
+    // Holding fire breaks sprint (CoD-style): hipfire at walk speed, ADS free next tick.
+    if (this.isFireHeld()) return false;
+    const sprintHeld = this.sessionInput?.sprint
+      ?? (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
     return (
       this.grounded &&
       !this.crouching &&
-      this.keys.has('ShiftLeft') &&
+      sprintHeld &&
       this.wishDir.lengthSq() > SPRINT_THRESHOLD * SPRINT_THRESHOLD &&
       this.forwardPressed()
     );
@@ -280,16 +445,171 @@ export class PlayerController {
     return this.crouching;
   }
 
+  isSliding(): boolean {
+    return this.sliding;
+  }
+
   isMoving(): boolean {
     return this.getHorizontalSpeed() > 0.15 || this.wishDir.lengthSq() > 0.01;
   }
 
   isADSHeld(): boolean {
-    return this.keys.has('MouseRight');
+    return this.sessionInput?.aim ?? this.keys.has('MouseRight');
   }
 
   isFireHeld(): boolean {
-    return this.keys.has('MouseLeft');
+    return this.sessionInput?.fire ?? this.keys.has('MouseLeft');
+  }
+
+  setSessionInput(input: Readonly<InputFrame> | null): void {
+    this.sessionInput = input;
+  }
+
+  /** Immutable fixed-tick input sample for GameSession/replay recording. */
+  sampleInputFrame(): InputFrame {
+    const moveX = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) -
+      (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
+    const moveY = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
+      (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
+    const frame: InputFrame = {
+      moveX,
+      moveY,
+      lookX: this.pendingLookX,
+      lookY: this.pendingLookY,
+      fire: this.keys.has('MouseLeft'),
+      firePressed: this.pendingFirePressed,
+      aim: this.keys.has('MouseRight'),
+      aimPressed: this.pendingAimPressed,
+      reload: this.pendingReload,
+      grenade: this.pendingGrenade,
+      interact: this.pendingInteract,
+      jump: this.pendingJump,
+      crouch: this.keys.has('ControlLeft')
+        || this.keys.has('ControlRight')
+        || this.keys.has('KeyC'),
+      sprint: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'),
+      weaponSlot: this.pendingWeaponSlot,
+      weaponCycle: this.pendingWeaponCycle,
+    };
+    this.pendingLookX = 0;
+    this.pendingLookY = 0;
+    this.pendingFirePressed = false;
+    this.pendingAimPressed = false;
+    this.pendingJump = false;
+    this.pendingReload = false;
+    this.pendingGrenade = false;
+    this.pendingInteract = false;
+    this.pendingWeaponSlot = undefined;
+    this.pendingWeaponCycle = 0;
+    return frame;
+  }
+
+  /** Clears latched controls when pausing, losing focus, or restoring a checkpoint. */
+  clearInput(): void {
+    this.keys.clear();
+    this.sessionInput = null;
+    this.wantCrouch = false;
+    this.jumpPressed = false;
+    this.sliding = false;
+    this.slideTimer = 0;
+    this.pendingLookX = 0;
+    this.pendingLookY = 0;
+    this.pendingFirePressed = false;
+    this.pendingAimPressed = false;
+    this.pendingJump = false;
+    this.pendingReload = false;
+    this.pendingGrenade = false;
+    this.pendingInteract = false;
+    this.pendingWeaponSlot = undefined;
+    this.pendingWeaponCycle = 0;
+    this.previousSessionCrouch = false;
+  }
+
+  /** Snapshot of codes currently tracked as held (keyboard + mouse buttons). */
+  getHeldKeyCodes(): string[] {
+    return [...this.keys];
+  }
+
+  /**
+   * Codes to re-apply after death restore. Alt-tab during the death delay calls
+   * beginInputSuspend (blur) but skips the pause menu while dead, so live `keys`
+   * are empty and only the suspend snapshot still knows which WASD are held.
+   * Drains the latch so auto-respawn does not leave movement dead until repress.
+   */
+  consumeHeldKeysForRestore(): string[] {
+    if (this.suspendedHeldKeys !== null) {
+      const held = [...this.suspendedHeldKeys];
+      this.suspendedHeldKeys = null;
+      return held;
+    }
+    return [...this.keys];
+  }
+
+  /**
+   * Re-apply sustained keyboard holds after clearInput. Physical keys that never
+   * received a keyup stay down in the OS, so without this WASD/sprint/crouch go
+   * dead until the player releases and represses. Mouse buttons are skipped —
+   * pointer lock owns fire/aim edges after a restore.
+   */
+  resyncHeldKeys(codes: Iterable<string>): void {
+    for (const code of codes) {
+      if (code === 'MouseLeft' || code === 'MouseRight') continue;
+      this.keys.add(code);
+    }
+    const crouchHeld =
+      this.keys.has('ControlLeft')
+      || this.keys.has('ControlRight')
+      || this.keys.has('KeyC');
+    // Drive crouch intent from live keys, not a prior restore latch — otherwise
+    // a crouched checkpoint sticks after crouch was released during death delay.
+    // When held, treat as already down so the next session frame does not
+    // edge-trigger startSlide.
+    this.wantCrouch = crouchHeld;
+    this.previousSessionCrouch = crouchHeld;
+  }
+
+  /**
+   * Pause / pointer-unlock path: snapshot keyboard holds, then clear latches.
+   * Keyup/keydown while suspended keep the snapshot current (same stuck-keys
+   * class as death restore, but keys can change while the menu is open).
+   * Idempotent: blur often races ahead of pointerlockchange and must not
+   * replace an existing snapshot with an empty live key set.
+   */
+  beginInputSuspend(): void {
+    const live = [...this.keys].filter(
+      (code) => code !== 'MouseLeft' && code !== 'MouseRight',
+    );
+    if (this.suspendedHeldKeys === null) {
+      this.suspendedHeldKeys = new Set(live);
+    } else {
+      for (const code of live) this.suspendedHeldKeys.add(code);
+    }
+    this.clearInput();
+  }
+
+  /**
+   * Resume from pause: clear edges again, then restore still-held keyboard codes.
+   * No-ops the suspend bookkeeping when beginInputSuspend was never called
+   * (fresh Play from the title menu).
+   */
+  endInputSuspend(): void {
+    const held = this.suspendedHeldKeys;
+    this.suspendedHeldKeys = null;
+    this.clearInput();
+    if (held && held.size > 0) this.resyncHeldKeys(held);
+  }
+
+  isInputSuspended(): boolean {
+    return this.suspendedHeldKeys !== null;
+  }
+
+  setBaseFov(fov: number): void {
+    this.camera.fov = MathUtils.clamp(fov, 60, 120);
+    this.camera.updateProjectionMatrix();
+  }
+
+  setAdsSensitivityMultiplier(multiplier: number): void {
+    this.adsSensitivityMultiplier = MathUtils.clamp(multiplier, 0.2, 1.5);
   }
 
   /**
@@ -331,6 +651,7 @@ export class PlayerController {
   }
 
   addArmor(amount: number): void {
+    if (!this.alive) return;
     this.armor = Math.min(this.maxArmor, this.armor + amount);
   }
 
@@ -347,6 +668,7 @@ export class PlayerController {
    */
   update(dt: number, colliders: WorldCollider[]): void {
     const clampedDt = Math.min(dt, 0.05);
+    this.previousPosition.copy(this.position);
     this.justLanded = false;
     this.landImpact = 0;
 
@@ -355,11 +677,22 @@ export class PlayerController {
       return;
     }
 
+    this.applyFixedInput();
     this.updateCrouchState(colliders);
     this.computeWishDir();
 
+    this.mantleCooldown = Math.max(0, this.mantleCooldown - clampedDt);
+    if (this.sliding) {
+      this.slideTimer -= clampedDt;
+      if (this.slideTimer <= 0 || !this.grounded || this.getHorizontalSpeed() < 3.2) {
+        this.sliding = false;
+      }
+    }
+
     const sprinting = this.isSprinting();
-    const maxSpeed = this.crouching
+    const maxSpeed = this.sliding
+      ? Math.max(SLIDE_START_SPEED, this.getHorizontalSpeed())
+      : this.crouching
       ? this.crouchSpeed
       : sprinting
         ? this.sprintSpeed
@@ -373,7 +706,11 @@ export class PlayerController {
     );
 
     if (this.grounded) {
-      this.applyFriction(clampedDt, GROUND_FRICTION, this.wishDir.lengthSq() < 0.01);
+      this.applyFriction(
+        clampedDt,
+        this.sliding ? 3.2 : GROUND_FRICTION,
+        !this.sliding && this.wishDir.lengthSq() < 0.01,
+      );
     } else {
       this.applyFriction(clampedDt, AIR_FRICTION, false);
     }
@@ -385,13 +722,14 @@ export class PlayerController {
       this.velocity.z *= scale;
     }
 
-    if (this.grounded && this.keys.has('Space')) {
-      this.velocity.y = this.jumpVelocity;
-      this.grounded = false;
-      if (this.crouching) {
-        this.velocity.y *= 1.05;
+    if (this.grounded && this.jumpPressed) {
+      if (!this.tryMantle(colliders)) {
+        this.velocity.y = this.jumpVelocity;
+        this.grounded = false;
+        if (this.crouching) this.velocity.y *= 1.05;
       }
     }
+    this.jumpPressed = false;
 
     if (!this.grounded) {
       this.velocity.y -= GRAVITY * clampedDt;
@@ -429,9 +767,21 @@ export class PlayerController {
 
   private bindInput(): void {
     const onKeyDown = (e: KeyboardEvent) => {
+      const freshPress = !this.keys.has(e.code);
       this.keys.add(e.code);
+      this.suspendedHeldKeys?.add(e.code);
+      if (freshPress && e.code === 'Space') this.pendingJump = true;
+      if (freshPress && e.code === 'KeyR') this.pendingReload = true;
+      if (freshPress && e.code === 'KeyG') this.pendingGrenade = true;
+      if (freshPress && (e.code === 'KeyE' || e.code === 'KeyF')) this.pendingInteract = true;
+      if (freshPress && (e.code === 'Digit1' || e.code === 'Numpad1')) this.pendingWeaponSlot = 1;
+      if (freshPress && (e.code === 'Digit2' || e.code === 'Numpad2')) this.pendingWeaponSlot = 2;
+      if (freshPress && (e.code === 'Digit3' || e.code === 'Numpad3')) this.pendingWeaponSlot = 3;
       if (e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'KeyC') {
         this.wantCrouch = true;
+        if (!this.sessionInput && freshPress && this.grounded && this.isSprinting() && this.getHorizontalSpeed() > 5.2) {
+          this.startSlide();
+        }
       }
       if (this.pointerLocked && (e.code === 'Space' || e.code.startsWith('Control'))) {
         e.preventDefault();
@@ -440,6 +790,7 @@ export class PlayerController {
 
     const onKeyUp = (e: KeyboardEvent) => {
       this.keys.delete(e.code);
+      this.suspendedHeldKeys?.delete(e.code);
       if (e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'KeyC') {
         if (
           !this.keys.has('ControlLeft') &&
@@ -452,8 +803,14 @@ export class PlayerController {
     };
 
     const onMouseDown = (e: MouseEvent) => {
-      if (e.button === 0) this.keys.add('MouseLeft');
-      if (e.button === 2) this.keys.add('MouseRight');
+      if (e.button === 0) {
+        if (!this.keys.has('MouseLeft')) this.pendingFirePressed = true;
+        this.keys.add('MouseLeft');
+      }
+      if (e.button === 2) {
+        if (!this.keys.has('MouseRight')) this.pendingAimPressed = true;
+        this.keys.add('MouseRight');
+      }
     };
 
     const onMouseUp = (e: MouseEvent) => {
@@ -463,9 +820,14 @@ export class PlayerController {
 
     const onMouseMove = (e: MouseEvent) => {
       if (!this.pointerLocked || !this.alive) return;
-      this.yaw -= e.movementX * this.sensitivity;
-      this.pitch -= e.movementY * this.sensitivity;
-      this.pitch = MathUtils.clamp(this.pitch, -Math.PI * 0.49, Math.PI * 0.49);
+      this.pendingLookX += e.movementX;
+      this.pendingLookY += e.movementY;
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      if (!this.pointerLocked) return;
+      e.preventDefault();
+      this.pendingWeaponCycle = e.deltaY > 0 ? 1 : -1;
     };
 
     const onLockChange = () => {
@@ -481,8 +843,10 @@ export class PlayerController {
     };
 
     const onBlur = () => {
-      this.keys.clear();
-      this.wantCrouch = false;
+      // Alt-tab / focus loss often fires blur before pointerlockchange.
+      // Bare clearInput empties holds so a later beginInputSuspend snapshots
+      // nothing and resume leaves WASD dead until repress.
+      this.beginInputSuspend();
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -490,6 +854,7 @@ export class PlayerController {
     window.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('pointerlockchange', onLockChange);
     window.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('blur', onBlur);
@@ -500,6 +865,7 @@ export class PlayerController {
       () => window.removeEventListener('mousedown', onMouseDown),
       () => window.removeEventListener('mouseup', onMouseUp),
       () => window.removeEventListener('mousemove', onMouseMove),
+      () => window.removeEventListener('wheel', onWheel),
       () => document.removeEventListener('pointerlockchange', onLockChange),
       () => window.removeEventListener('contextmenu', onContextMenu),
       () => window.removeEventListener('blur', onBlur),
@@ -507,10 +873,62 @@ export class PlayerController {
   }
 
   private forwardPressed(): boolean {
-    return this.keys.has('KeyW') || this.keys.has('ArrowUp');
+    return (this.sessionInput?.moveY ?? 0) > 0.35
+      || this.keys.has('KeyW')
+      || this.keys.has('ArrowUp');
+  }
+
+  private applyFixedInput(): void {
+    const input = this.sessionInput;
+    if (input) {
+      const aimScale = input.aim ? this.adsSensitivityMultiplier : 1;
+      this.applyLookDelta(input.lookX, input.lookY, aimScale);
+      const crouchPressed = input.crouch && !this.previousSessionCrouch;
+      this.previousSessionCrouch = input.crouch;
+      this.wantCrouch = input.crouch;
+      this.jumpPressed = input.jump;
+      if (
+        crouchPressed
+        && this.grounded
+        && input.sprint
+        && input.moveY > SPRINT_THRESHOLD
+        && this.getHorizontalSpeed() > 5.2
+      ) this.startSlide();
+      return;
+    }
+    if (this.pendingLookX !== 0 || this.pendingLookY !== 0) {
+      const aimScale = this.keys.has('MouseRight') ? this.adsSensitivityMultiplier : 1;
+      this.applyLookDelta(this.pendingLookX, this.pendingLookY, aimScale);
+      this.pendingLookX = 0;
+      this.pendingLookY = 0;
+    }
+    if (this.pendingJump) {
+      this.jumpPressed = true;
+      this.pendingJump = false;
+    }
+  }
+
+  private applyLookDelta(x: number, y: number, scale: number): void {
+    this.yaw -= x * this.sensitivity * scale;
+    this.pitch = MathUtils.clamp(
+      this.pitch - y * this.sensitivity * scale,
+      -Math.PI * 0.49,
+      Math.PI * 0.49,
+    );
   }
 
   private computeWishDir(): void {
+    if (this.sessionInput) {
+      this.wishDir.set(this.sessionInput.moveX, 0, -this.sessionInput.moveY);
+      if (this.wishDir.lengthSq() > 0) {
+        const sin = Math.sin(this.yaw);
+        const cos = Math.cos(this.yaw);
+        const x = this.wishDir.x;
+        const z = this.wishDir.z;
+        this.wishDir.set(x * cos + z * sin, 0, -x * sin + z * cos).normalize();
+      }
+      return;
+    }
     let x = 0;
     let z = 0;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) z -= 1;
@@ -557,15 +975,18 @@ export class PlayerController {
   }
 
   private updateCrouchState(colliders: WorldCollider[]): void {
-    if (this.wantCrouch) {
+    if (this.wantCrouch || this.sliding) {
       this.crouching = true;
       this.targetEyeHeight = CROUCH_EYE;
       this.halfHeight = CROUCH_HALF_HEIGHT;
+      this.resizePhysicsCapsule(CROUCH_HALF_HEIGHT);
       return;
     }
 
     if (this.crouching) {
-      const canStand = this.hasHeadroom(colliders, STAND_HALF_HEIGHT);
+      const canStand = this.physicsWorld && this.physicsBodyId
+        ? this.resizePhysicsCapsule(STAND_HALF_HEIGHT)
+        : this.hasHeadroom(colliders, STAND_HALF_HEIGHT);
       if (canStand) {
         this.crouching = false;
         this.targetEyeHeight = STAND_EYE;
@@ -578,6 +999,140 @@ export class PlayerController {
       this.targetEyeHeight = STAND_EYE;
       this.halfHeight = STAND_HALF_HEIGHT;
     }
+  }
+
+  private startSlide(): void {
+    this.sliding = true;
+    this.slideTimer = SLIDE_DURATION;
+    this.crouching = true;
+    this.targetEyeHeight = CROUCH_EYE;
+    this.halfHeight = CROUCH_HALF_HEIGHT;
+    const speed = this.getHorizontalSpeed();
+    this.slideStartSpeed = Math.max(speed, SLIDE_START_SPEED);
+    if (speed > 0.01 && speed < SLIDE_START_SPEED) {
+      const boost = SLIDE_START_SPEED / speed;
+      this.velocity.x *= boost;
+      this.velocity.z *= boost;
+    }
+  }
+
+  /**
+   * Deterministic low-ledge mantle. Authored gameplay uses Rapier rays and a
+   * capsule sweep; the AABB branch exists only for explicit fallback mode.
+   */
+  private tryMantle(colliders: WorldCollider[]): boolean {
+    if (this.mantleCooldown > 0 || !this.forwardPressed()) return false;
+    const forwardX = -Math.sin(this.yaw);
+    const forwardZ = -Math.cos(this.yaw);
+    if (this.physicsWorld && this.physicsBodyId) {
+      return this.tryPhysicsMantle(forwardX, forwardZ);
+    }
+    const probeX = this.position.x + forwardX * MANTLE_REACH;
+    const probeZ = this.position.z + forwardZ * MANTLE_REACH;
+
+    for (const collider of colliders) {
+      const inProbe =
+        probeX + RADIUS >= collider.min.x &&
+        probeX - RADIUS <= collider.max.x &&
+        probeZ + RADIUS >= collider.min.z &&
+        probeZ - RADIUS <= collider.max.z;
+      if (!inProbe) continue;
+
+      const ledgeHeight = collider.max.y - this.position.y;
+      if (ledgeHeight < MANTLE_MIN_HEIGHT || ledgeHeight > MANTLE_MAX_HEIGHT) continue;
+
+      const landingX = probeX + forwardX * (RADIUS + 0.2);
+      const landingZ = probeZ + forwardZ * (RADIUS + 0.2);
+      const landingY = collider.max.y + 0.025;
+      this._min.set(landingX - RADIUS, landingY, landingZ - RADIUS);
+      this._max.set(landingX + RADIUS, landingY + STAND_HALF_HEIGHT * 2, landingZ + RADIUS);
+      const blocked = colliders.some(
+        (other) => other !== collider && this.aabbOverlap(this._min, this._max, other.min, other.max),
+      );
+      if (blocked) continue;
+
+      this.mantleHeight = ledgeHeight;
+      this.position.set(landingX, landingY, landingZ);
+      this.velocity.set(forwardX * 2.4, 0, forwardZ * 2.4);
+      this.grounded = true;
+      this.sliding = false;
+      this.mantleCooldown = 0.35;
+      return true;
+    }
+    return false;
+  }
+
+  private tryPhysicsMantle(forwardX: number, forwardZ: number): boolean {
+    if (!this.physicsWorld || !this.physicsBodyId) return false;
+    const forward = { x: forwardX, y: 0, z: forwardZ };
+    const blocker = this.physicsWorld.castRay({
+      origin: {
+        x: this.position.x,
+        y: this.position.y + MANTLE_MIN_HEIGHT,
+        z: this.position.z,
+      },
+      direction: forward,
+      maxDistance: MANTLE_REACH,
+      excludeBody: this.physicsBodyId,
+      includeCharacters: false,
+    });
+    if (!blocker || Math.abs(blocker.normal.y) > 0.45) return false;
+
+    const landingDistance = blocker.distance + RADIUS * 2 + 0.24;
+    const landingX = this.position.x + forwardX * landingDistance;
+    const landingZ = this.position.z + forwardZ * landingDistance;
+    const ledgeProbeY = this.position.y + MANTLE_MAX_HEIGHT + 0.24;
+    const ledge = this.physicsWorld.castRay({
+      origin: { x: landingX, y: ledgeProbeY, z: landingZ },
+      direction: { x: 0, y: -1, z: 0 },
+      maxDistance: MANTLE_MAX_HEIGHT + 0.3,
+      excludeBody: this.physicsBodyId,
+      includeCharacters: false,
+    });
+    if (!ledge || ledge.normal.y < 0.55) return false;
+    const landingY = ledge.point.y + 0.025;
+    const ledgeHeight = landingY - this.position.y;
+    if (ledgeHeight < MANTLE_MIN_HEIGHT || ledgeHeight > MANTLE_MAX_HEIGHT) return false;
+
+    const blocked = this.physicsWorld.sweepCapsule({
+      position: {
+        x: landingX,
+        y: landingY + STAND_HALF_HEIGHT,
+        z: landingZ,
+      },
+      radius: RADIUS,
+      halfHeight: STAND_HALF_HEIGHT,
+      direction: { x: 0, y: 1, z: 0 },
+      maxDistance: 0.01,
+      excludeBody: this.physicsBodyId,
+      includeCharacters: false,
+    });
+    if (blocked) return false;
+
+    this.mantleHeight = ledgeHeight;
+    this.position.set(landingX, landingY, landingZ);
+    this.physicsWorld.teleportCharacter?.(this.physicsBodyId, {
+      x: landingX,
+      y: landingY + this.physicsCenterOffset,
+      z: landingZ,
+    });
+    this.velocity.set(forwardX * 2.4, 0, forwardZ * 2.4);
+    this.grounded = true;
+    this.sliding = false;
+    this.mantleCooldown = 0.35;
+    return true;
+  }
+
+  private resizePhysicsCapsule(halfHeight: number): boolean {
+    if (!this.physicsWorld || !this.physicsBodyId) return true;
+    const resized = this.physicsWorld.resizeCharacter?.(
+      this.physicsBodyId,
+      RADIUS,
+      halfHeight,
+    );
+    if (resized === false) return false;
+    this.physicsCenterOffset = halfHeight;
+    return true;
   }
 
   private hasHeadroom(colliders: WorldCollider[], standHalf: number): boolean {
@@ -620,6 +1175,30 @@ export class PlayerController {
   }
 
   private moveAndCollide(dt: number, colliders: WorldCollider[]): void {
+    if (this.physicsWorld && this.physicsBodyId) {
+      const desired = {
+        x: this.velocity.x * dt,
+        y: this.velocity.y * dt,
+        z: this.velocity.z * dt,
+      };
+      const previouslyGrounded = this.grounded;
+      const moved = this.physicsWorld.moveCharacter(this.physicsBodyId, { translation: desired });
+      this.position.set(
+        moved.position.x,
+        moved.position.y - this.physicsCenterOffset,
+        moved.position.z,
+      );
+      this.grounded = moved.grounded;
+      if (this.grounded && !previouslyGrounded && this.velocity.y < -0.5) {
+        this.fallSpeedAtImpact = -this.velocity.y;
+      }
+      if (Math.abs(moved.appliedTranslation.y - desired.y) > 1e-4) this.velocity.y = 0;
+      if (moved.collisions.length > 0) {
+        if (Math.abs(moved.appliedTranslation.x - desired.x) > 1e-4) this.velocity.x = 0;
+        if (Math.abs(moved.appliedTranslation.z - desired.z) > 1e-4) this.velocity.z = 0;
+      }
+      return;
+    }
     const steps = 3;
     const stepDt = dt / steps;
     this.grounded = false;

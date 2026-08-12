@@ -18,12 +18,48 @@ export interface KillfeedEntry {
   headshot?: boolean;
 }
 
+export type HUDObjectiveStatus = 'active' | 'completed' | 'failed';
+
+export interface HUDObjectiveState {
+  /** Short directive, for example "Disable the jammer". */
+  title: string;
+  /** Optional location or tactical context shown beneath the directive. */
+  description?: string;
+  /** Normalized objective completion, from 0 to 1. Omit for non-progress objectives. */
+  progress?: number;
+  /** Human-readable progress such as "42 SEC" or "2 / 4". */
+  progressLabel?: string;
+  status?: HUDObjectiveStatus;
+}
+
+export type HUDMissionResultKind = 'completed' | 'failed';
+
+export interface HUDMissionResult {
+  kind: HUDMissionResultKind;
+  title?: string;
+  subtitle?: string;
+  /** Optional restart/continue hint. */
+  action?: string;
+}
+
 interface KillfeedItem {
   el: HTMLElement;
   expires: number;
 }
 
 const ACCENT = '#e85d04';
+
+/**
+ * Maps WeaponSystem angular spread (radians) to crosshair half-gap (CSS px).
+ * Tuned so hip AR (~0.022 rad) reads ~15px idle and bloom/sprint stay under the 48px clamp.
+ */
+export const CROSSHAIR_SPREAD_RAD_TO_PX = 700;
+
+/** Convert simulation cone half-angle to the HUD half-gap setCrosshairSpread expects. */
+export function angularSpreadToCrosshairPx(angularRadians: number): number {
+  if (!Number.isFinite(angularRadians) || angularRadians <= 0) return 0;
+  return angularRadians * CROSSHAIR_SPREAD_RAD_TO_PX;
+}
 
 /**
  * COD-style HTML HUD overlay injected into `#app`.
@@ -51,6 +87,19 @@ export class HUD {
   private compassStrip!: HTMLElement;
   private compassLabel!: HTMLElement;
   private interactPrompt!: HTMLElement;
+  private objective!: HTMLElement;
+  private objectiveTitle!: HTMLElement;
+  private objectiveDescription!: HTMLElement;
+  private objectiveProgress!: HTMLElement;
+  private objectiveProgressFill!: HTMLElement;
+  private objectiveProgressLabel!: HTMLElement;
+  private checkpoint!: HTMLElement;
+  private checkpointLabel!: HTMLElement;
+  private missionResult!: HTMLElement;
+  private missionResultKicker!: HTMLElement;
+  private missionResultTitle!: HTMLElement;
+  private missionResultSubtitle!: HTMLElement;
+  private missionResultAction!: HTMLElement;
 
   private spread = 0;
   private targetSpread = 4;
@@ -61,6 +110,7 @@ export class HUD {
   private disposed = false;
   private raf = 0;
   private lastTime = performance.now();
+  private checkpointTimer: number | undefined;
 
   constructor(container?: HTMLElement) {
     const mount = container ?? document.getElementById('app') ?? document.body;
@@ -80,9 +130,97 @@ export class HUD {
     this.root.setAttribute('aria-hidden', visible ? 'false' : 'true');
   }
 
+  /** Show, update, or clear the current mission objective. */
+  setObjective(state: HUDObjectiveState | null): void {
+    if (!state) {
+      this.objective.classList.remove('hud-objective-visible');
+      this.objective.setAttribute('aria-hidden', 'true');
+      return;
+    }
+
+    const status = state.status ?? 'active';
+    this.objective.dataset.status = status;
+    this.objectiveTitle.textContent = state.title;
+    this.objectiveDescription.textContent = state.description ?? '';
+    this.objectiveDescription.hidden = !state.description;
+    this.objective.classList.add('hud-objective-visible');
+    this.objective.setAttribute('aria-hidden', 'false');
+
+    const hasProgress = Number.isFinite(state.progress);
+    this.objectiveProgress.hidden = !hasProgress;
+    if (hasProgress) {
+      const progress = Math.min(1, Math.max(0, state.progress ?? 0));
+      this.objectiveProgressFill.style.transform = `scaleX(${progress})`;
+      this.objectiveProgressLabel.textContent =
+        state.progressLabel ?? `${Math.round(progress * 100)}%`;
+    }
+  }
+
+  /** Update objective progress without replacing its title or status. */
+  setObjectiveProgress(progress: number, label?: string): void {
+    const normalized = Math.min(1, Math.max(0, progress));
+    this.objectiveProgress.hidden = false;
+    this.objectiveProgressFill.style.transform = `scaleX(${normalized})`;
+    this.objectiveProgressLabel.textContent = label ?? `${Math.round(normalized * 100)}%`;
+  }
+
+  /** Present an automatically dismissing checkpoint confirmation. */
+  showCheckpoint(label = 'Checkpoint reached', durationMs = 2400): void {
+    if (this.checkpointTimer !== undefined) window.clearTimeout(this.checkpointTimer);
+    const duration = Math.max(600, durationMs);
+    this.checkpointLabel.textContent = label;
+    this.checkpoint.style.setProperty('--hud-checkpoint-duration', `${duration}ms`);
+    this.checkpoint.classList.remove('hud-checkpoint-visible');
+    // Restart the entrance animation when checkpoints arrive in quick succession.
+    void this.checkpoint.offsetWidth;
+    this.checkpoint.classList.add('hud-checkpoint-visible');
+    this.checkpointTimer = window.setTimeout(() => {
+      this.checkpoint.classList.remove('hud-checkpoint-visible');
+      this.checkpointTimer = undefined;
+    }, duration);
+  }
+
+  /** Show the full-screen mission completion/failure treatment. */
+  showMissionResult(result: HUDMissionResult): void {
+    const completed = result.kind === 'completed';
+    this.missionResult.dataset.kind = result.kind;
+    this.missionResultKicker.textContent = completed ? 'MISSION COMPLETE' : 'MISSION FAILED';
+    this.missionResultTitle.textContent =
+      result.title ?? (completed ? 'Objective secured' : 'Operator down');
+    this.missionResultSubtitle.textContent =
+      result.subtitle ??
+      (completed ? 'Extraction confirmed. Stand by for debrief.' : resolveDeathRestoreSubtitle(false));
+    this.missionResultAction.textContent = result.action ?? '';
+    this.missionResultAction.hidden = !result.action;
+    this.missionResult.classList.add('hud-result-visible');
+    this.missionResult.setAttribute('aria-hidden', 'false');
+  }
+
+  clearMissionResult(): void {
+    this.missionResult.classList.remove('hud-result-visible');
+    this.missionResult.setAttribute('aria-hidden', 'true');
+  }
+
+  setCrosshairVisible(visible: boolean): void {
+    this.crosshair.classList.toggle('hud-crosshair-disabled', !visible);
+  }
+
+  /** Mirrors the accessibility setting without changing global page preferences. */
+  setReducedMotion(reduced: boolean): void {
+    this.root.classList.toggle('hud-reduced-motion', reduced);
+  }
+
   /** Dynamic crosshair half-gap in CSS pixels. */
   setCrosshairSpread(spread: number): void {
     this.targetSpread = Math.max(2, Math.min(48, spread));
+  }
+
+  /**
+   * Drive the crosshair from WeaponSystem.getCurrentSpread() so movement bloom,
+   * sustained-fire bloom, and ADS tightening match the hitscan cone.
+   */
+  setCrosshairFromWeaponSpread(angularRadians: number): void {
+    this.setCrosshairSpread(angularSpreadToCrosshairPx(angularRadians));
   }
 
   setAmmo(state: HUDAmmoState): void {
@@ -118,6 +256,16 @@ export class HUD {
   }
 
   /**
+   * Drop an in-flight hitmarker — used when combat telemetry is rewound
+   * (death restore / rematch / QA / session restore). Death-delay frag credits
+   * can arm the marker after the world already rewound.
+   */
+  clearHitmarker(): void {
+    this.hitmarkerTimer = 0;
+    this.hitmarker.classList.remove('hud-hitmarker-active', 'hud-hitmarker-hs');
+  }
+
+  /**
    * Instant damage flash + lingering vignette strength 0–1.
    */
   setDamage(intensity: number, flash = true): void {
@@ -130,8 +278,18 @@ export class HUD {
   }
 
   clearDamage(): void {
+    this.damageFlash = 0;
     this.damageVignette.style.opacity = '0';
     this.root.classList.remove('hud-damage-flash');
+  }
+
+  /** Drop all killfeed rows — used when combat telemetry is rewound (death restore). */
+  clearKillfeed(): void {
+    while (this.killItems.length > 0) {
+      const item = this.killItems.pop();
+      item?.el.remove();
+    }
+    this.killfeed.replaceChildren();
   }
 
   pushKillfeed(entry: KillfeedEntry): void {
@@ -158,7 +316,8 @@ export class HUD {
       this.interactPrompt.textContent = '';
       return;
     }
-    this.interactPrompt.innerHTML = `<kbd>F</kbd> <span>${escapeHtml(text)}</span>`;
+    // PlayerController accepts both E and F for interact — show both.
+    this.interactPrompt.innerHTML = formatInteractPrompt(text);
     this.interactPrompt.classList.add('hud-prompt-visible');
   }
 
@@ -166,6 +325,7 @@ export class HUD {
     if (this.disposed) return;
     this.disposed = true;
     cancelAnimationFrame(this.raf);
+    if (this.checkpointTimer !== undefined) window.clearTimeout(this.checkpointTimer);
     this.root.remove();
   }
 
@@ -233,6 +393,19 @@ export class HUD {
     this.compassStrip = this.root.querySelector('.hud-compass-strip')!;
     this.compassLabel = this.root.querySelector('.hud-compass-label')!;
     this.interactPrompt = this.root.querySelector('.hud-interact')!;
+    this.objective = this.root.querySelector('.hud-objective')!;
+    this.objectiveTitle = this.root.querySelector('.hud-objective-title')!;
+    this.objectiveDescription = this.root.querySelector('.hud-objective-description')!;
+    this.objectiveProgress = this.root.querySelector('.hud-objective-progress')!;
+    this.objectiveProgressFill = this.root.querySelector('.hud-objective-progress-fill')!;
+    this.objectiveProgressLabel = this.root.querySelector('.hud-objective-progress-label')!;
+    this.checkpoint = this.root.querySelector('.hud-checkpoint')!;
+    this.checkpointLabel = this.root.querySelector('.hud-checkpoint-label')!;
+    this.missionResult = this.root.querySelector('.hud-mission-result')!;
+    this.missionResultKicker = this.root.querySelector('.hud-result-kicker')!;
+    this.missionResultTitle = this.root.querySelector('.hud-result-title')!;
+    this.missionResultSubtitle = this.root.querySelector('.hud-result-subtitle')!;
+    this.missionResultAction = this.root.querySelector('.hud-result-action')!;
     void this.crosshair;
   }
 
@@ -251,6 +424,27 @@ export class HUD {
 
       <div class="hud-killfeed" aria-live="polite"></div>
 
+      <section class="hud-objective" data-status="active" aria-live="polite" aria-hidden="true">
+        <div class="hud-objective-rule"></div>
+        <p class="hud-objective-kicker"><span class="hud-objective-diamond"></span> CURRENT OBJECTIVE</p>
+        <h2 class="hud-objective-title">Awaiting orders</h2>
+        <p class="hud-objective-description" hidden></p>
+        <div class="hud-objective-progress" hidden>
+          <div class="hud-objective-progress-track">
+            <div class="hud-objective-progress-fill"></div>
+          </div>
+          <span class="hud-objective-progress-label">0%</span>
+        </div>
+      </section>
+
+      <div class="hud-checkpoint" role="status" aria-live="polite">
+        <span class="hud-checkpoint-icon">◇</span>
+        <span class="hud-checkpoint-copy">
+          <small>PROGRESS SAVED</small>
+          <b class="hud-checkpoint-label">Checkpoint reached</b>
+        </span>
+      </div>
+
       <div class="hud-crosshair" aria-hidden="true">
         <span class="hud-cross-arm hud-cross-t"></span>
         <span class="hud-cross-arm hud-cross-b"></span>
@@ -264,6 +458,16 @@ export class HUD {
       </div>
 
       <div class="hud-interact" role="status"></div>
+
+      <section class="hud-mission-result" aria-live="assertive" aria-hidden="true">
+        <div class="hud-result-scan"></div>
+        <div class="hud-result-content">
+          <p class="hud-result-kicker">MISSION COMPLETE</p>
+          <h2 class="hud-result-title">Objective secured</h2>
+          <p class="hud-result-subtitle">Extraction confirmed. Stand by for debrief.</p>
+          <p class="hud-result-action" hidden></p>
+        </div>
+      </section>
 
       <div class="hud-bottom-left">
         <div class="hud-vitals">
@@ -294,6 +498,35 @@ export class HUD {
       </div>
     `;
   }
+}
+
+/** Interact binding shown on prompts; matches PlayerController KeyE / KeyF. */
+export const INTERACT_PROMPT_KEYS = 'E/F' as const;
+
+/** Markup for an on-screen interact cue (both accepted keys). */
+export function formatInteractPrompt(text: string): string {
+  return `<kbd>E</kbd>/<kbd>F</kbd> <span>${escapeHtml(text)}</span>`;
+}
+
+/**
+ * Single HUD interact slot: jammer/objective prompts beat wave toasts so
+ * syncMissionHud cannot wipe an in-range interact, while an active toast keeps
+ * the slot when nothing higher-priority is showing.
+ */
+export function resolveMissionInteractPrompt(options: {
+  jammerInteractAvailable: boolean;
+  waveToastRemaining: number;
+}): string | null {
+  if (options.jammerInteractAvailable) return 'DISABLE SIGNAL JAMMER';
+  if (options.waveToastRemaining > 0) return 'INCOMING — HOSTILES REINFORCING';
+  return null;
+}
+
+/** Death overlay copy must match restoreCheckpoint vs resetRunToOpening. */
+export function resolveDeathRestoreSubtitle(hasCheckpoint: boolean): string {
+  return hasCheckpoint
+    ? 'Restoring the last secure checkpoint.'
+    : 'Restarting Operation Nightglass.';
 }
 
 function escapeHtml(s: string): string {

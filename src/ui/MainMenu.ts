@@ -1,7 +1,18 @@
+import { normalizeQualityPreference, type QualityPreference } from '../engine';
+
 export interface MainMenuSettings {
   sensitivity: number;
   masterVolume: number;
   sfxVolume: number;
+  /** ADS look sensitivity multiplier. Defaults to 0.8 for legacy callers. */
+  adsMultiplier?: number;
+  /** Horizontal/engine camera field of view in degrees. Defaults to 90. */
+  fieldOfView?: number;
+  reducedMotion?: boolean;
+  toggleADS?: boolean;
+  showCrosshair?: boolean;
+  /** A capability-capped graphics preference; never forces an unsafe tier. */
+  graphicsTier?: QualityPreference;
 }
 
 export interface MainMenuCallbacks {
@@ -9,10 +20,16 @@ export interface MainMenuCallbacks {
   onSettingsChange?: (settings: MainMenuSettings) => void;
 }
 
-const DEFAULT_SETTINGS: MainMenuSettings = {
+export const DEFAULT_MAIN_MENU_SETTINGS: Required<MainMenuSettings> = {
   sensitivity: 1.0,
   masterVolume: 0.85,
   sfxVolume: 1.0,
+  adsMultiplier: 0.8,
+  fieldOfView: 90,
+  reducedMotion: false,
+  toggleADS: false,
+  showCrosshair: true,
+  graphicsTier: 'auto',
 };
 
 /**
@@ -22,7 +39,7 @@ const DEFAULT_SETTINGS: MainMenuSettings = {
 export class MainMenu {
   readonly root: HTMLElement;
 
-  private settings: MainMenuSettings;
+  private settings: Required<MainMenuSettings>;
   private readonly callbacks: MainMenuCallbacks;
   private panelMain!: HTMLElement;
   private panelSettings!: HTMLElement;
@@ -31,7 +48,7 @@ export class MainMenu {
 
   constructor(callbacks: MainMenuCallbacks, container?: HTMLElement) {
     this.callbacks = callbacks;
-    this.settings = { ...DEFAULT_SETTINGS };
+    this.settings = { ...DEFAULT_MAIN_MENU_SETTINGS };
 
     const mount = container ?? document.getElementById('app') ?? document.body;
     this.root = document.createElement('div');
@@ -59,18 +76,35 @@ export class MainMenu {
     return !this.root.classList.contains('main-menu-hidden');
   }
 
+  /**
+   * Release builds are fail-closed: an incomplete authored asset package must
+   * never silently launch into the procedural development route.
+   */
+  setLaunchBlocked(message: string | null): void {
+    const play = this.root.querySelector<HTMLButtonElement>('[data-action="play"]');
+    if (!play) return;
+    play.disabled = message !== null;
+    this.root.classList.toggle('main-menu-launch-blocked', message !== null);
+    const notice = this.root.querySelector<HTMLElement>('[data-launch-notice]');
+    if (notice) {
+      notice.textContent = message ?? '';
+      notice.hidden = message === null;
+    }
+  }
+
   getSettings(): MainMenuSettings {
     return { ...this.settings };
   }
 
   setSettings(partial: Partial<MainMenuSettings>): void {
-    this.settings = { ...this.settings, ...partial };
+    this.settings = normalizeSettings({ ...this.settings, ...partial });
     this.syncSliders();
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    window.removeEventListener('keydown', this.onKeyDown);
     this.root.remove();
   }
 
@@ -100,6 +134,12 @@ export class MainMenu {
     const sens = this.root.querySelector<HTMLInputElement>('#mm-sensitivity');
     const master = this.root.querySelector<HTMLInputElement>('#mm-master-vol');
     const sfx = this.root.querySelector<HTMLInputElement>('#mm-sfx-vol');
+    const ads = this.root.querySelector<HTMLInputElement>('#mm-ads-multiplier');
+    const fov = this.root.querySelector<HTMLInputElement>('#mm-fov');
+    const reducedMotion = this.root.querySelector<HTMLInputElement>('#mm-reduced-motion');
+    const toggleAds = this.root.querySelector<HTMLInputElement>('#mm-toggle-ads');
+    const crosshair = this.root.querySelector<HTMLInputElement>('#mm-crosshair');
+    const graphicsTier = this.root.querySelector<HTMLSelectElement>('#mm-graphics-tier');
 
     sens?.addEventListener('input', () => {
       this.settings.sensitivity = parseFloat(sens.value);
@@ -119,6 +159,39 @@ export class MainMenu {
       this.callbacks.onSettingsChange?.(this.getSettings());
     });
 
+    ads?.addEventListener('input', () => {
+      this.settings.adsMultiplier = parseFloat(ads.value);
+      this.updateSliderLabel('mm-ads-multiplier-val', `${this.settings.adsMultiplier.toFixed(2)}×`);
+      this.emitSettings();
+    });
+
+    fov?.addEventListener('input', () => {
+      this.settings.fieldOfView = parseInt(fov.value, 10);
+      this.updateSliderLabel('mm-fov-val', `${this.settings.fieldOfView}°`);
+      this.emitSettings();
+    });
+
+    reducedMotion?.addEventListener('change', () => {
+      this.settings.reducedMotion = reducedMotion.checked;
+      this.root.classList.toggle('mm-reduced-motion', reducedMotion.checked);
+      this.emitSettings();
+    });
+
+    toggleAds?.addEventListener('change', () => {
+      this.settings.toggleADS = toggleAds.checked;
+      this.emitSettings();
+    });
+
+    crosshair?.addEventListener('change', () => {
+      this.settings.showCrosshair = crosshair.checked;
+      this.emitSettings();
+    });
+
+    graphicsTier?.addEventListener('change', () => {
+      this.settings.graphicsTier = normalizeQualityPreference(graphicsTier.value);
+      this.emitSettings();
+    });
+
     // Keyboard: Enter to play from main panel
     window.addEventListener('keydown', this.onKeyDown);
   }
@@ -135,6 +208,8 @@ export class MainMenu {
   };
 
   private startPlay(): void {
+    const play = this.root.querySelector<HTMLButtonElement>('[data-action="play"]');
+    if (play?.disabled) return;
     const target = document.getElementById('app') ?? document.body;
     const requestLock = (): void => {
       const el = target.querySelector('canvas') ?? target;
@@ -158,12 +233,31 @@ export class MainMenu {
     const sens = this.root.querySelector<HTMLInputElement>('#mm-sensitivity');
     const master = this.root.querySelector<HTMLInputElement>('#mm-master-vol');
     const sfx = this.root.querySelector<HTMLInputElement>('#mm-sfx-vol');
+    const ads = this.root.querySelector<HTMLInputElement>('#mm-ads-multiplier');
+    const fov = this.root.querySelector<HTMLInputElement>('#mm-fov');
+    const reducedMotion = this.root.querySelector<HTMLInputElement>('#mm-reduced-motion');
+    const toggleAds = this.root.querySelector<HTMLInputElement>('#mm-toggle-ads');
+    const crosshair = this.root.querySelector<HTMLInputElement>('#mm-crosshair');
+    const graphicsTier = this.root.querySelector<HTMLSelectElement>('#mm-graphics-tier');
     if (sens) sens.value = String(this.settings.sensitivity);
     if (master) master.value = String(this.settings.masterVolume);
     if (sfx) sfx.value = String(this.settings.sfxVolume);
+    if (ads) ads.value = String(this.settings.adsMultiplier);
+    if (fov) fov.value = String(this.settings.fieldOfView);
+    if (reducedMotion) reducedMotion.checked = this.settings.reducedMotion;
+    if (toggleAds) toggleAds.checked = this.settings.toggleADS;
+    if (crosshair) crosshair.checked = this.settings.showCrosshair;
+    if (graphicsTier) graphicsTier.value = this.settings.graphicsTier;
     this.updateSliderLabel('mm-sensitivity-val', this.settings.sensitivity.toFixed(2));
     this.updateSliderLabel('mm-master-vol-val', Math.round(this.settings.masterVolume * 100) + '%');
     this.updateSliderLabel('mm-sfx-vol-val', Math.round(this.settings.sfxVolume * 100) + '%');
+    this.updateSliderLabel('mm-ads-multiplier-val', `${this.settings.adsMultiplier.toFixed(2)}×`);
+    this.updateSliderLabel('mm-fov-val', `${this.settings.fieldOfView}°`);
+    this.root.classList.toggle('mm-reduced-motion', this.settings.reducedMotion);
+  }
+
+  private emitSettings(): void {
+    this.callbacks.onSettingsChange?.(this.getSettings());
   }
 
   private updateSliderLabel(id: string, text: string): void {
@@ -180,8 +274,8 @@ export class MainMenu {
       <div class="mm-content">
         <header class="mm-header">
           <p class="mm-eyebrow">TACTICAL OPS DIVISION</p>
-          <h1 class="mm-title">BLACKOPS<span>:</span> FRONTLINE</h1>
-          <p class="mm-subtitle">URBAN ASSAULT</p>
+          <h1 class="mm-title">FRONTLINE<span>:</span> NIGHTGLASS</h1>
+          <p class="mm-subtitle">OPERATION NIGHTGLASS</p>
         </header>
 
         <div class="mm-panels">
@@ -189,6 +283,7 @@ export class MainMenu {
             <button type="button" class="mm-btn mm-btn-primary" data-action="play">
               <span class="mm-btn-tag">01</span> PLAY
             </button>
+            <p class="mm-launch-notice" data-launch-notice role="status" hidden></p>
             <button type="button" class="mm-btn" data-action="settings">
               <span class="mm-btn-tag">02</span> SETTINGS
             </button>
@@ -198,12 +293,61 @@ export class MainMenu {
           </nav>
 
           <div class="mm-panel" data-panel="settings" aria-label="Settings">
-            <h2 class="mm-panel-title">SETTINGS</h2>
+            <div class="mm-panel-heading">
+              <div>
+                <p class="mm-panel-index">02 / SYSTEM</p>
+                <h2 class="mm-panel-title">SETTINGS</h2>
+              </div>
+              <span>FIELD CONFIGURATION</span>
+            </div>
+
+            <p class="mm-settings-group">AIM</p>
+
+            <label class="mm-slider">
+              <span class="mm-slider-label">GRAPHICS TIER <b>CAPABILITY CAPPED</b></span>
+              <select id="mm-graphics-tier" aria-label="Graphics tier">
+                <option value="auto">AUTO (RECOMMENDED)</option>
+                <option value="low">LOW</option>
+                <option value="medium">MEDIUM</option>
+                <option value="high">HIGH</option>
+                <option value="ultra">ULTRA</option>
+              </select>
+            </label>
 
             <label class="mm-slider">
               <span class="mm-slider-label">MOUSE SENSITIVITY <b id="mm-sensitivity-val">1.00</b></span>
               <input id="mm-sensitivity" type="range" min="0.2" max="3" step="0.05" value="1" />
             </label>
+
+            <label class="mm-slider">
+              <span class="mm-slider-label">ADS MULTIPLIER <b id="mm-ads-multiplier-val">0.80×</b></span>
+              <input id="mm-ads-multiplier" type="range" min="0.2" max="1.5" step="0.05" value="0.8" />
+            </label>
+
+            <label class="mm-slider">
+              <span class="mm-slider-label">FIELD OF VIEW <b id="mm-fov-val">90°</b></span>
+              <input id="mm-fov" type="range" min="70" max="120" step="1" value="90" />
+            </label>
+
+            <div class="mm-toggle-grid">
+              <label class="mm-toggle">
+                <span><b>TOGGLE ADS</b><small>Aim remains active after release</small></span>
+                <input id="mm-toggle-ads" type="checkbox" />
+                <i aria-hidden="true"></i>
+              </label>
+              <label class="mm-toggle">
+                <span><b>CROSSHAIR</b><small>Show the center weapon reticle</small></span>
+                <input id="mm-crosshair" type="checkbox" checked />
+                <i aria-hidden="true"></i>
+              </label>
+              <label class="mm-toggle">
+                <span><b>REDUCED MOTION</b><small>Limit interface and camera motion</small></span>
+                <input id="mm-reduced-motion" type="checkbox" />
+                <i aria-hidden="true"></i>
+              </label>
+            </div>
+
+            <p class="mm-settings-group mm-settings-audio">AUDIO</p>
 
             <label class="mm-slider">
               <span class="mm-slider-label">MASTER VOLUME <b id="mm-master-vol-val">85%</b></span>
@@ -219,7 +363,13 @@ export class MainMenu {
           </div>
 
           <div class="mm-panel" data-panel="controls" aria-label="Controls">
-            <h2 class="mm-panel-title">CONTROLS</h2>
+            <div class="mm-panel-heading">
+              <div>
+                <p class="mm-panel-index">03 / INPUT</p>
+                <h2 class="mm-panel-title">CONTROLS</h2>
+              </div>
+              <span>KEYBOARD + MOUSE</span>
+            </div>
             <ul class="mm-controls-list">
               <li><kbd>W A S D</kbd> <span>Move</span></li>
               <li><kbd>MOUSE</kbd> <span>Look</span></li>
@@ -229,6 +379,7 @@ export class MainMenu {
               <li><kbd>CTRL / C</kbd> <span>Crouch</span></li>
               <li><kbd>SPACE</kbd> <span>Jump</span></li>
               <li><kbd>1 – 4</kbd> <span>Weapons</span></li>
+              <li><kbd>G</kbd> <span>Frag grenade</span></li>
               <li><kbd>F</kbd> <span>Interact</span></li>
               <li><kbd>ESC</kbd> <span>Menu / Unlock</span></li>
             </ul>
@@ -244,4 +395,27 @@ export class MainMenu {
       </div>
     `;
   }
+}
+
+function normalizeSettings(settings: MainMenuSettings): Required<MainMenuSettings> {
+  return {
+    sensitivity: clamp(settings.sensitivity, 0.2, 3, DEFAULT_MAIN_MENU_SETTINGS.sensitivity),
+    masterVolume: clamp(settings.masterVolume, 0, 1, DEFAULT_MAIN_MENU_SETTINGS.masterVolume),
+    sfxVolume: clamp(settings.sfxVolume, 0, 1, DEFAULT_MAIN_MENU_SETTINGS.sfxVolume),
+    adsMultiplier: clamp(
+      settings.adsMultiplier,
+      0.2,
+      1.5,
+      DEFAULT_MAIN_MENU_SETTINGS.adsMultiplier,
+    ),
+    fieldOfView: clamp(settings.fieldOfView, 70, 120, DEFAULT_MAIN_MENU_SETTINGS.fieldOfView),
+    reducedMotion: settings.reducedMotion ?? DEFAULT_MAIN_MENU_SETTINGS.reducedMotion,
+    toggleADS: settings.toggleADS ?? DEFAULT_MAIN_MENU_SETTINGS.toggleADS,
+    showCrosshair: settings.showCrosshair ?? DEFAULT_MAIN_MENU_SETTINGS.showCrosshair,
+    graphicsTier: normalizeQualityPreference(settings.graphicsTier),
+  };
+}
+
+function clamp(value: number | undefined, min: number, max: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value as number)) : fallback;
 }

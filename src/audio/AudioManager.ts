@@ -3,6 +3,8 @@
  * No external audio files — all synthesized at runtime.
  */
 
+import { SeededRandom, type RandomSource } from '../mission';
+
 export type AudioBus = 'master' | 'sfx' | 'ambient' | 'ui';
 
 export interface AudioManagerOptions {
@@ -10,6 +12,8 @@ export interface AudioManagerOptions {
   sfxVolume?: number;
   ambientVolume?: number;
   uiVolume?: number;
+  /** Independent deterministic presentation stream. */
+  random?: RandomSource;
 }
 
 type NoiseType = 'white' | 'brown';
@@ -24,23 +28,61 @@ export class AudioManager {
   private unlocked = false;
   private windNodes: { osc: OscillatorNode; filter: BiquadFilterNode; gain: GainNode } | null =
     null;
+  private suppliedAmbientSource: AudioBufferSourceNode | null = null;
+  private acousticSpace: 'indoor' | 'outdoor' = 'outdoor';
   private disposeGesture: (() => void) | null = null;
+  private readonly suppliedBuffers = new Map<string, AudioBuffer>();
 
   private masterVol: number;
   private sfxVol: number;
   private ambientVol: number;
   private uiVol: number;
+  private readonly random: RandomSource;
 
   constructor(options: AudioManagerOptions = {}) {
     this.masterVol = options.masterVolume ?? 0.85;
     this.sfxVol = options.sfxVolume ?? 1;
     this.ambientVol = options.ambientVolume ?? 0.35;
     this.uiVol = options.uiVolume ?? 0.7;
+    const fallbackRandom = new SeededRandom(0x41554449);
+    this.random = options.random ?? (() => fallbackRandom.next());
     this.bindUnlockGesture();
   }
 
   get isUnlocked(): boolean {
     return this.unlocked;
+  }
+
+  getSuppliedBufferCount(): number {
+    return new Set(this.suppliedBuffers.values()).size;
+  }
+
+  installBuffer(id: string, buffer: AudioBuffer, aliases: readonly string[] = []): void {
+    this.suppliedBuffers.set(id.toLowerCase(), buffer);
+    for (const alias of aliases) this.suppliedBuffers.set(alias.toLowerCase(), buffer);
+    if (
+      this.unlocked
+      && [id, ...aliases].some((value) => value.toLowerCase() === 'ambience')
+    ) {
+      this.stopAmbientWind();
+      this.startAmbientWind();
+    }
+  }
+
+  clearSuppliedBuffers(): void {
+    this.stopAmbientWind();
+    this.suppliedBuffers.clear();
+    if (this.unlocked) this.startAmbientWind();
+  }
+
+  setAcousticSpace(space: 'indoor' | 'outdoor'): void {
+    if (this.acousticSpace === space) return;
+    this.acousticSpace = space;
+    this.applyAcousticMix();
+  }
+
+  getAcousticSpace(): 'indoor' | 'outdoor' {
+    return this.acousticSpace;
   }
 
   /** Resume AudioContext after a user gesture (click / key / pointer). */
@@ -68,7 +110,11 @@ export class AudioManager {
         break;
       case 'ambient':
         this.ambientVol = v;
-        if (this.ambientGain) this.ambientGain.gain.value = v;
+        if (this.ambientGain) {
+          // Indoor duck is a mix state, not a volume preference — keep the
+          // preference and re-apply the current acoustic attenuation.
+          this.ambientGain.gain.value = v * this.ambientSpaceMul();
+        }
         break;
       case 'ui':
         this.uiVol = v;
@@ -97,25 +143,44 @@ export class AudioManager {
     const dest = this.sfxGain!;
     const t = ctx.currentTime;
     const i = Math.min(1.5, Math.max(0.3, intensity));
+    const indoor = this.acousticSpace === 'indoor';
+    // Seeded pitch wobble keeps bursts from stacking into a machine tone while
+    // staying deterministic for a given presentation stream.
+    const pitch = 0.94 + this.random() * 0.12;
+    const suppliedLayers = this.playSuppliedLayers(
+      ['weapon-ar-fire', 'weapon-ar-mechanical', 'weapon-layers'],
+      this.sfxGain!,
+      i,
+    );
+    if (suppliedLayers > 0) {
+      this.playSupplied(
+        [indoor ? 'indoor-tail' : 'outdoor-tail'],
+        this.sfxGain!,
+        i * 0.62,
+      );
+      return;
+    }
 
-    // Noise body
-    const noiseDur = 0.12;
+    // Noise body — snappy attack so fire reads on the same frame as the muzzle.
+    const noiseDur = indoor ? 0.09 : 0.12;
     const noise = this.createNoiseBuffer(noiseDur, 'white');
     const src = ctx.createBufferSource();
     src.buffer = noise;
+    src.playbackRate.value = pitch;
 
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = 1200 + Math.random() * 400;
-    bp.Q.value = 0.7;
+    // Indoors emphasize the mid slap; outdoors keep more open air around the crack.
+    bp.frequency.value = (indoor ? 980 : 1200) + this.random() * (indoor ? 280 : 400);
+    bp.Q.value = indoor ? 1.1 : 0.7;
 
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
-    hp.frequency.value = 180;
+    hp.frequency.value = indoor ? 240 : 180;
 
     const noiseGain = ctx.createGain();
     noiseGain.gain.setValueAtTime(0.0001, t);
-    noiseGain.gain.exponentialRampToValueAtTime(0.9 * i, t + 0.004);
+    noiseGain.gain.exponentialRampToValueAtTime(0.95 * i, t + 0.002);
     noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + noiseDur);
 
     src.connect(bp);
@@ -128,12 +193,12 @@ export class AudioManager {
     // Low thump
     const osc = ctx.createOscillator();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(140, t);
-    osc.frequency.exponentialRampToValueAtTime(45, t + 0.08);
+    osc.frequency.setValueAtTime(140 * pitch, t);
+    osc.frequency.exponentialRampToValueAtTime(45 * pitch, t + 0.08);
 
     const thumpGain = ctx.createGain();
     thumpGain.gain.setValueAtTime(0.0001, t);
-    thumpGain.gain.exponentialRampToValueAtTime(0.7 * i, t + 0.003);
+    thumpGain.gain.exponentialRampToValueAtTime((indoor ? 0.82 : 0.7) * i, t + 0.002);
     thumpGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
 
     osc.connect(thumpGain);
@@ -144,27 +209,264 @@ export class AudioManager {
     // Metallic click layer
     const click = ctx.createOscillator();
     click.type = 'square';
-    click.frequency.value = 2200 + Math.random() * 600;
+    click.frequency.value = (2200 + this.random() * 600) * pitch;
     const clickGain = ctx.createGain();
     clickGain.gain.setValueAtTime(0.12 * i, t);
     clickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.025);
     const clickFilter = ctx.createBiquadFilter();
     clickFilter.type = 'bandpass';
-    clickFilter.frequency.value = 2800;
+    clickFilter.frequency.value = 2800 * pitch;
     clickFilter.Q.value = 4;
     click.connect(clickFilter);
     clickFilter.connect(clickGain);
     clickGain.connect(dest);
     click.start(t);
     click.stop(t + 0.03);
+
+    this.playGunshotTail(i);
   }
 
-  /** Magazine release + bolt click. */
-  playReload(): void {
+  /**
+   * Reflected tail after the crack. This is the layer that makes a shot feel
+   * like it happened somewhere: a tight slap indoors, a long open decay outside.
+   */
+  private playGunshotTail(intensity: number): void {
+    const ctx = this.ctx!;
+    const dest = this.sfxGain!;
+    const t = ctx.currentTime;
+    const indoor = this.acousticSpace === 'indoor';
+    const duration = indoor ? 0.34 : 0.85;
+
+    const tail = this.createNoiseBuffer(duration, 'brown');
+    const src = ctx.createBufferSource();
+    src.buffer = tail;
+
+    const band = ctx.createBiquadFilter();
+    band.type = indoor ? 'bandpass' : 'lowpass';
+    band.frequency.setValueAtTime(indoor ? 900 : 1600, t);
+    band.frequency.exponentialRampToValueAtTime(indoor ? 420 : 240, t + duration);
+    band.Q.value = indoor ? 1.4 : 0.7;
+
+    const gain = ctx.createGain();
+    // Indoors the reflection arrives almost immediately and dies hard; outdoors
+    // it swells slightly then decays over most of a second.
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(
+      (indoor ? 0.3 : 0.2) * intensity,
+      t + (indoor ? 0.012 : 0.05),
+    );
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+    src.connect(band);
+    band.connect(gain);
+    gain.connect(dest);
+    src.start(t);
+    src.stop(t + duration + 0.05);
+  }
+
+  /** Dead trigger on an empty weapon — a dry mechanical clack, no report. */
+  playDryFire(): void {
     if (!this.ready()) return;
     const ctx = this.ctx!;
     const dest = this.sfxGain!;
     const t = ctx.currentTime;
+    if (this.playSupplied(['weapon-dryfire', 'weapon-empty'], dest, 0.8)) return;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(1500, t);
+    osc.frequency.exponentialRampToValueAtTime(360, t + 0.035);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.16, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 1100;
+    f.Q.value = 3.5;
+    osc.connect(f);
+    f.connect(g);
+    g.connect(dest);
+    osc.start(t);
+    osc.stop(t + 0.06);
+  }
+
+  /** Brass hitting the ground a beat after the shot. */
+  playShellDrop(): void {
+    if (!this.ready()) return;
+    const ctx = this.ctx!;
+    const dest = this.sfxGain!;
+    // The delay is what makes the cue read as brass landing rather than part of
+    // the report itself.
+    const t = ctx.currentTime + 0.18 + this.random() * 0.12;
+    if (this.playSupplied(['weapon-shell', 'shell-casing'], dest, 0.5)) return;
+
+    for (let i = 0; i < 2; i++) {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      const when = t + i * (0.045 + this.random() * 0.03);
+      osc.frequency.setValueAtTime(2400 + this.random() * 1400, when);
+      osc.frequency.exponentialRampToValueAtTime(1200, when + 0.05);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.055 / (i + 1), when);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.07);
+      const f = ctx.createBiquadFilter();
+      f.type = 'highpass';
+      f.frequency.value = 1800;
+      osc.connect(f);
+      f.connect(g);
+      g.connect(dest);
+      osc.start(when);
+      osc.stop(when + 0.08);
+    }
+  }
+
+  /** Fabric-and-grit scrape as the player commits to a slide. */
+  playSlide(power = 1): void {
+    if (!this.ready()) return;
+    const ctx = this.ctx!;
+    const dest = this.sfxGain!;
+    const t = ctx.currentTime;
+    const p = Math.min(1.4, Math.max(0.2, power));
+    if (this.playSupplied(['movement-slide', 'slide'], dest, p)) return;
+
+    const duration = 0.55;
+    const src = ctx.createBufferSource();
+    src.buffer = this.createNoiseBuffer(duration, 'white');
+
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.setValueAtTime(2100, t);
+    band.frequency.exponentialRampToValueAtTime(620, t + duration);
+    band.Q.value = 0.9;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.3 * p, t + 0.06);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+    src.connect(band);
+    band.connect(g);
+    g.connect(dest);
+    src.start(t);
+    src.stop(t + duration + 0.05);
+  }
+
+  /** Grunt-and-scuff for pulling over a ledge. */
+  playMantle(): void {
+    if (!this.ready()) return;
+    const ctx = this.ctx!;
+    const dest = this.sfxGain!;
+    const t = ctx.currentTime;
+    if (this.playSupplied(['movement-mantle', 'mantle'], dest, 0.9)) return;
+
+    this.playFootstep('concrete', 1.2);
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, t);
+    osc.frequency.exponentialRampToValueAtTime(96, t + 0.22);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.1, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 420;
+    osc.connect(f);
+    f.connect(g);
+    g.connect(dest);
+    osc.start(t);
+    osc.stop(t + 0.28);
+  }
+
+  /** Frag body clacking off hard cover. */
+  playGrenadeBounce(power = 1): void {
+    if (!this.ready()) return;
+    const ctx = this.ctx!;
+    const dest = this.sfxGain!;
+    const t = ctx.currentTime;
+    const p = Math.min(1.3, Math.max(0.15, power));
+    const pitch = 0.92 + this.random() * 0.16;
+    if (this.playSupplied(['grenade-bounce', 'impacts'], dest, p * 0.6)) return;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime((720 + this.random() * 340) * pitch, t);
+    osc.frequency.exponentialRampToValueAtTime(240 * pitch, t + 0.09);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.13 * p, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 640 * pitch;
+    f.Q.value = 2.2;
+    osc.connect(f);
+    f.connect(g);
+    g.connect(dest);
+    osc.start(t);
+    osc.stop(t + 0.12);
+  }
+
+  /**
+   * Distance-attenuated blast. Far detonations lose their crack and keep only
+   * the low roll, which is the cheapest convincing distance cue available.
+   */
+  playExplosion(distance = 0, radius = 6.5): void {
+    if (!this.ready()) return;
+    const ctx = this.ctx!;
+    const dest = this.sfxGain!;
+    const t = ctx.currentTime;
+    const proximity = Math.max(0.12, 1 - Math.min(1, distance / Math.max(1, radius * 2.2)));
+    if (this.playSupplied(['explosion', 'grenade-explode'], dest, proximity * 1.2)) return;
+
+    const duration = 0.9 + proximity * 0.5;
+    const src = ctx.createBufferSource();
+    src.buffer = this.createNoiseBuffer(duration, 'brown');
+    const low = ctx.createBiquadFilter();
+    low.type = 'lowpass';
+    low.frequency.setValueAtTime(1400 * proximity + 180, t);
+    low.frequency.exponentialRampToValueAtTime(90, t + duration);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.85 * proximity, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+    src.connect(low);
+    low.connect(g);
+    g.connect(dest);
+    src.start(t);
+    src.stop(t + duration + 0.05);
+
+    // Sub-bass thump only survives at close range.
+    if (proximity > 0.3) {
+      const sub = ctx.createOscillator();
+      sub.type = 'sine';
+      sub.frequency.setValueAtTime(88, t);
+      sub.frequency.exponentialRampToValueAtTime(28, t + 0.4);
+      const subGain = ctx.createGain();
+      subGain.gain.setValueAtTime(0.0001, t);
+      subGain.gain.exponentialRampToValueAtTime(0.7 * proximity, t + 0.015);
+      subGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+      sub.connect(subGain);
+      subGain.connect(dest);
+      sub.start(t);
+      sub.stop(t + 0.5);
+    }
+  }
+
+  /**
+   * Magazine release + bolt click.
+   *
+   * @param empty Adds the bolt-release slam that only happens on a dry reload.
+   */
+  playReload(empty = false): void {
+    if (!this.ready()) return;
+    const ctx = this.ctx!;
+    const dest = this.sfxGain!;
+    const t = ctx.currentTime;
+    if (this.playSupplied(
+      empty ? ['weapon-reload-empty', 'weapon-reload', 'reload'] : ['weapon-reload', 'reload'],
+      this.sfxGain!,
+      1,
+    )) return;
 
     const click = (freq: number, when: number, dur: number, vol: number) => {
       const osc = ctx.createOscillator();
@@ -190,6 +492,9 @@ export class AudioManager {
     click(280, t + 0.12, 0.07, 0.28);
     click(780, t + 0.32, 0.04, 0.4);
     click(520, t + 0.48, 0.06, 0.32);
+    // The bolt slamming home is the audible difference between reloading early
+    // and being caught empty.
+    if (empty) click(190, t + 0.66, 0.11, 0.46);
   }
 
   /** Soft scuff footstep — varies pitch per step. */
@@ -199,6 +504,12 @@ export class AudioManager {
     const dest = this.sfxGain!;
     const t = ctx.currentTime;
     const p = Math.min(1.5, Math.max(0.3, power));
+    const indoor = this.acousticSpace === 'indoor';
+    if (this.playSupplied(
+      [`footsteps-${surface}`, `footstep-${surface}`, 'footsteps-surface'],
+      this.sfxGain!,
+      p,
+    )) return;
 
     const freqs: Record<string, number> = {
       concrete: 180,
@@ -206,19 +517,23 @@ export class AudioManager {
       metal: 320,
     };
     const base = freqs[surface] ?? 180;
+    // Confined spaces truncate the scrape and push more body; outdoors open the top.
+    const spaceMul = indoor ? 0.7 : 1.08;
+    const pitch = 0.9 + this.random() * 0.2;
 
-    const noise = this.createNoiseBuffer(0.08, surface === 'dirt' ? 'brown' : 'white');
+    const noise = this.createNoiseBuffer(indoor ? 0.06 : 0.08, surface === 'dirt' ? 'brown' : 'white');
     const src = ctx.createBufferSource();
     src.buffer = noise;
+    src.playbackRate.value = pitch;
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = base + Math.random() * 80;
+    filter.frequency.value = (base + this.random() * 80) * spaceMul;
 
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.28 * p, t + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    g.gain.exponentialRampToValueAtTime((indoor ? 0.34 : 0.28) * p, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + (indoor ? 0.07 : 0.09));
 
     src.connect(filter);
     filter.connect(g);
@@ -229,7 +544,7 @@ export class AudioManager {
     if (surface === 'metal') {
       const osc = ctx.createOscillator();
       osc.type = 'sine';
-      osc.frequency.value = 900 + Math.random() * 200;
+      osc.frequency.value = (900 + this.random() * 200) * pitch;
       const og = ctx.createGain();
       og.gain.setValueAtTime(0.06 * p, t);
       og.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
@@ -240,12 +555,28 @@ export class AudioManager {
     }
   }
 
+  playImpact(surface = 'default'): void {
+    if (!this.ready()) return;
+    const resolved: 'concrete' | 'dirt' | 'metal' = surface === 'metal'
+      ? 'metal'
+      : surface === 'dirt' || surface === 'wood'
+        ? 'dirt'
+        : 'concrete';
+    if (this.playSupplied(
+      [`impact-${resolved}`, 'impacts'],
+      this.sfxGain!,
+      0.75,
+    )) return;
+    this.playFootstep(resolved, 0.4);
+  }
+
   /** Sharp UI confirmation beep for confirmed hits. */
   playHitMarker(headshot = false): void {
     if (!this.ready()) return;
     const ctx = this.ctx!;
     const dest = this.uiGain!;
     const t = ctx.currentTime;
+    if (this.playSupplied([headshot ? 'ui-headshot' : 'ui-hitmarker', 'ui'], this.uiGain!, 1)) return;
 
     const freq = headshot ? 1400 : 980;
     const osc = ctx.createOscillator();
@@ -275,6 +606,7 @@ export class AudioManager {
     const ctx = this.ctx!;
     const dest = this.uiGain!;
     const t = ctx.currentTime;
+    if (this.playSupplied(['ui-click', 'ui'], this.uiGain!, 0.8)) return;
     const osc = ctx.createOscillator();
     osc.type = 'sine';
     osc.frequency.value = 660;
@@ -289,9 +621,21 @@ export class AudioManager {
 
   /** Continuous low wind drone for urban dusk ambience. */
   startAmbientWind(): void {
-    if (!this.ready() || this.windNodes) return;
+    if (!this.ready() || this.windNodes || this.suppliedAmbientSource) return;
     const ctx = this.ctx!;
     const dest = this.ambientGain!;
+
+    const supplied = this.findSupplied(['ambience-dusk', 'ambience']);
+    if (supplied) {
+      const source = ctx.createBufferSource();
+      source.buffer = supplied;
+      source.loop = true;
+      source.connect(dest);
+      source.start();
+      this.suppliedAmbientSource = source;
+      this.applyAcousticMix();
+      return;
+    }
 
     const buffer = this.createNoiseBuffer(2.5, 'brown');
     const src = ctx.createBufferSource();
@@ -304,7 +648,7 @@ export class AudioManager {
     filter.Q.value = 0.6;
 
     const gain = ctx.createGain();
-    gain.gain.value = 0.22;
+    gain.gain.value = this.acousticSpace === 'indoor' ? 0.05 : 0.22;
 
     // Slow LFO on filter for living wind
     const lfo = ctx.createOscillator();
@@ -324,9 +668,19 @@ export class AudioManager {
     this.windNodes = { osc: lfo, filter, gain };
     // Keep buffer source alive on the nodes object via userData pattern
     (this.windNodes as unknown as { src: AudioBufferSourceNode }).src = src;
+    this.applyAcousticMix();
   }
 
   stopAmbientWind(): void {
+    if (this.suppliedAmbientSource) {
+      try {
+        this.suppliedAmbientSource.stop();
+      } catch {
+        /* already stopped */
+      }
+      this.suppliedAmbientSource.disconnect();
+      this.suppliedAmbientSource = null;
+    }
     if (!this.windNodes) return;
     try {
       this.windNodes.osc.stop();
@@ -352,6 +706,7 @@ export class AudioManager {
     this.sfxGain = null;
     this.ambientGain = null;
     this.uiGain = null;
+    this.suppliedBuffers.clear();
     this.unlocked = false;
   }
 
@@ -380,7 +735,7 @@ export class AudioManager {
     this.sfxGain.connect(this.masterGain);
 
     this.ambientGain = this.ctx.createGain();
-    this.ambientGain.gain.value = this.ambientVol;
+    this.ambientGain.gain.value = this.ambientVol * this.ambientSpaceMul();
     this.ambientGain.connect(this.masterGain);
 
     this.uiGain = this.ctx.createGain();
@@ -414,16 +769,73 @@ export class AudioManager {
 
     if (type === 'white') {
       for (let i = 0; i < length; i++) {
-        data[i] = Math.random() * 2 - 1;
+        data[i] = this.random() * 2 - 1;
       }
     } else {
       let last = 0;
       for (let i = 0; i < length; i++) {
-        const white = Math.random() * 2 - 1;
+        const white = this.random() * 2 - 1;
         last = (last + 0.02 * white) / 1.02;
         data[i] = last * 3.5;
       }
     }
     return buffer;
+  }
+
+  private playSupplied(ids: readonly string[], destination: AudioNode, gainValue: number): boolean {
+    const buffer = this.findSupplied(ids);
+    if (!buffer || !this.ctx) return false;
+    const source = this.ctx.createBufferSource();
+    const gain = this.ctx.createGain();
+    source.buffer = buffer;
+    gain.gain.value = Math.max(0, gainValue);
+    source.connect(gain);
+    gain.connect(destination);
+    source.start();
+    return true;
+  }
+
+  private playSuppliedLayers(
+    ids: readonly string[],
+    destination: AudioNode,
+    gainValue: number,
+  ): number {
+    const buffers = new Set(ids
+      .map((id) => this.suppliedBuffers.get(id.toLowerCase()))
+      .filter((candidate): candidate is AudioBuffer => candidate !== undefined));
+    for (const buffer of buffers) {
+      const source = this.ctx!.createBufferSource();
+      const gain = this.ctx!.createGain();
+      source.buffer = buffer;
+      gain.gain.value = Math.max(0, gainValue);
+      source.connect(gain);
+      gain.connect(destination);
+      source.start();
+    }
+    return buffers.size;
+  }
+
+  private findSupplied(ids: readonly string[]): AudioBuffer | undefined {
+    return ids
+      .map((id) => this.suppliedBuffers.get(id.toLowerCase()))
+      .find((candidate): candidate is AudioBuffer => candidate !== undefined);
+  }
+
+  /** Indoor spaces duck the outdoor wind bed so gunfire/footsteps own the mix. */
+  private ambientSpaceMul(): number {
+    return this.acousticSpace === 'indoor' ? 0.28 : 1;
+  }
+
+  private applyAcousticMix(): void {
+    if (!this.ctx || !this.ambientGain) return;
+    const t = this.ctx.currentTime;
+    const indoor = this.acousticSpace === 'indoor';
+    this.ambientGain.gain.cancelScheduledValues(t);
+    this.ambientGain.gain.setTargetAtTime(this.ambientVol * this.ambientSpaceMul(), t, 0.09);
+    if (!this.windNodes) return;
+    this.windNodes.filter.frequency.cancelScheduledValues(t);
+    this.windNodes.filter.frequency.setTargetAtTime(indoor ? 120 : 220, t, 0.12);
+    this.windNodes.gain.gain.cancelScheduledValues(t);
+    this.windNodes.gain.gain.setTargetAtTime(indoor ? 0.05 : 0.22, t, 0.1);
   }
 }

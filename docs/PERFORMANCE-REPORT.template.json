@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "captureId": "replace-with-unique-capture-id",
+  "capturedAt": "2026-01-01T00:00:00.000Z",
+  "browser": "Chromium desktop",
+  "browserVersion": "replace-with-full-Chromium-version",
+  "userAgent": "replace-with-captured-user-agent",
+  "quality": "high",
+  "resolution": { "width": 2560, "height": 1440 },
+  "hardware": {
+    "gpuClass": "RTX 3060-class",
+    "vendor": "replace-with-WebGL-vendor",
+    "device": "replace-with-WebGL-renderer",
+    "driver": "replace-with-driver-version",
+    "cpu": "replace-with-CPU-model"
+  },
+  "build": {
+    "bundleFile": "dist/assets/replace-with-index-bundle.js",
+    "bundleSha256": "replace-with-64-character-sha256"
+  },
+  "measurement": {
+    "tool": "NIGHTGLASS built-in WebGL2 sampler v1",
+    "sampleMode": "per-frame",
+    "gpuTimer": "EXT_disjoint_timer_query_webgl2",
+    "warmupSeconds": 60
+  },
+  "evidence": {
+    "samplesFile": "high-1440p.samples.ndjson",
+    "samplesSha256": "replace-with-64-character-sha256",
+    "frameSampleCount": 0,
+    "gpuAssetBytes": 0,
+    "gpuAssetEstimation": "unique scene buffer and texture payload bytes",
+    "runtimeAssetMode": "authored",
+    "proceduralFallbackVisible": false
+  },
+  "sampleDurationSeconds": 600,
+  "metrics": {
+    "sustainedFps": 0,
+    "p95FrameMs": 0,
+    "gpuMs": 0,
+    "mainThreadMs": 0,
+    "onePercentLowFps": 0,
+    "typicalDrawCalls": 0,
+    "peakDrawCalls": 0,
+    "typicalTriangles": 0,
+    "peakTriangles": 0,
+    "gpuAssetBytes": 0,
+    "compressedPayloadBytes": 0
+  }
+}
