@@ -14,13 +14,14 @@ import {
   Vector2,
   type Object3D,
 } from 'three';
+import { assetUrl } from '../AssetPaths';
 
 /**
  * Original project artwork used only to enrich the procedural development
  * fallback. It is deliberately not part of the authored asset contract.
  */
 export const DEVELOPMENT_SKYLINE_BACKDROP_URL =
-  '/assets/development/nightglass-dusk-skyline-v1.png';
+  assetUrl('assets/development/nightglass-dusk-skyline-v1.png');
 
 /**
  * The source image's final quarter is a photographed rooftop/foreground.

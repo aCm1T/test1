@@ -1,4 +1,6 @@
 import './style.css';
+import { assetUrl } from './AssetPaths';
+import { GameLifecycle } from './GameLifecycle';
 
 import {
   LinearFilter,
@@ -20,6 +22,7 @@ import {
   setupEnvironment,
   GameClock,
   FixedStepSimulation,
+  AdaptiveQualityController,
   AssetRegistry,
   createFetchAssetLoaders,
   detectGraphicsCapabilities,
@@ -31,6 +34,7 @@ import {
   type QualityProfile,
 } from './engine';
 import { bindSurfaceFamilyCompile } from './engine/StaticBatching';
+import { disposeCsm, initializeCsmHelper } from './engine/CascadedShadows';
 import {
   EnvironmentAssembler,
   DevelopmentPropLayer,
@@ -98,6 +102,13 @@ type RuntimeCheckpoint = {
   enemies: ReturnType<EnemyManager['snapshotState']>;
   randomState: number;
   hostileKills: number;
+  supplies: RunSupplies;
+};
+
+type RunSupplies = {
+  firstContact: boolean;
+  intersection: boolean;
+  defense: boolean;
 };
 
 type QACaptureState =
@@ -117,7 +128,14 @@ type QACaptureState =
 
 /** Original project art for procedural fallback soft goods only; never a release asset. */
 const DEVELOPMENT_RIPSTOP_URL =
-  '/assets/development/original-materials/nightglass-charcoal-ripstop-v1.png';
+  assetUrl('assets/development/original-materials/nightglass-urban-ripstop-v2.png');
+
+/**
+ * Let the opening patrol announce itself before rounds can hurt the player.
+ * Mission elapsed time is fixed-step state, so the grace window survives
+ * pause/replay without introducing a wall-clock combat branch.
+ */
+const OPENING_DAMAGE_GRACE_SECONDS = 2.5;
 
 function configureDevelopmentRipstopSource(texture: Texture, maxAnisotropy: number): void {
   texture.name = 'DevelopmentFallbackRipstopSource';
@@ -185,7 +203,11 @@ class Game {
   private readonly gameSession: GameSession;
   /** The only runtime authority that may alter graphics quality. */
   private quality: QualityProfile;
+  /** Menu choice stays AUTO even if runtime pressure lowers the resolved tier. */
+  private qualityPreference: QualityPreference;
   private readonly graphicsCapabilities: GraphicsCapabilities;
+  private readonly adaptiveQuality = new AdaptiveQualityController();
+  private readonly lifecycle = new GameLifecycle();
   /** `?release=1` is used by capture/release automation and rejects fallback art. */
   private readonly releaseMode = new URLSearchParams(window.location.search).get('release') === '1';
   private releaseAssetGate: string | null = null;
@@ -241,16 +263,33 @@ class Game {
 
   private playing = false;
   private paused = false;
+  private crosshairEnabled = true;
+  /** Distinguishes a real Esc/focus unlock from an initial lock request that a browser refused. */
+  private pointerLockAcquired = false;
   private footstepTimer = 0;
   private readonly muzzlePos = new Vector3();
   private readonly muzzleDir = new Vector3();
   private readonly tmp = new Vector3();
   private readonly losRayDir = new Vector3();
+  private readonly shotOrigin = new Vector3();
+  private readonly shotDirection = new Vector3();
   private lastWeaponName = '';
   private animId = 0;
+  private previousFrameTimestamp: number | null = null;
+  private previousTitleRender = -Infinity;
+  private frameTelemetryCountdown = 0;
   private lastAliveCount = -1;
   private waveToastTimer = 0;
+  private fragToastTimer = 0;
   private hostileKills = 0;
+  private deaths = 0;
+  private supplies: RunSupplies = {
+    firstContact: false,
+    intersection: false,
+    defense: false,
+  };
+  private pointerPromptTimer: number | undefined;
+  private controlsIntroTimer: number | undefined;
   /** Weapon credited on the next onEnemyDeath (Frag during splash, else active gun). */
   private killCreditWeapon = 'Assault Rifle';
   /** Forked AI stream for the current navigation tick; null outside that phase. */
@@ -266,6 +305,11 @@ class Game {
     const app = document.getElementById('app');
     if (!app) throw new Error('#app mount missing');
     this.app = app;
+    document.documentElement.style.setProperty(
+      '--nightglass-menu-bg',
+      `url("${assetUrl('assets/frontline-menu-bg.png')}")`,
+    );
+    this.setLifecycle('loading');
     // A module can survive hot reloads. Clear any former development-only
     // shared fallback clones before a release bootstrap constructs enemies.
     if (this.releaseMode) Enemy.clearDevelopmentRipstop();
@@ -296,7 +340,10 @@ class Game {
       ? qaQualityParam
       : 'auto';
     const quality = selectQualityProfile(this.graphicsCapabilities, qaQuality).profile;
+    this.qualityPreference = qaQuality;
     this.quality = quality;
+    this.app.dataset.qualityPreference = qaQuality;
+    this.app.dataset.qualityTier = quality.tier;
     this.renderer.applyQuality(quality);
 
     this.environment = setupEnvironment(
@@ -308,7 +355,7 @@ class Game {
     // location plate must not globally recolor it before visual approval.
     if (!this.releaseMode && new URLSearchParams(window.location.search).get('devHdri') === '1') {
       void this.environment.loadDevelopmentFallback(
-        '/assets/development/polyhaven/sunset_jhbcentral_2k.hdr',
+        assetUrl('assets/development/polyhaven/sunset_jhbcentral_2k.hdr'),
       );
     }
 
@@ -362,10 +409,6 @@ class Game {
     }
     // Clear intersection spawn — avoid prop/car overlap that flings the player.
     this.level.playerSpawn.set(0, 0, 0);
-    // Opening hostiles ahead on +Z (player yaw = PI looks down +Z).
-    this.level.enemySpawns.unshift(new Vector3(4.0, 0, 11));
-    this.level.enemySpawns.unshift(new Vector3(-3.5, 0, 9));
-
     this.player = new PlayerController({
       position: this.level.playerSpawn.clone(),
       sensitivity: 0.00215,
@@ -407,6 +450,7 @@ class Game {
     this.weapons = new WeaponSystem({
       player: this.player,
       camera: this.player.camera,
+      scene: this.renderer.scene,
       viewModelCamera: this.renderer.viewModelCamera,
       colliders: this.routeColliders,
       viewModelScene: this.renderer.viewModelScene,
@@ -466,14 +510,21 @@ class Game {
       random: () => this.decalRandom.next(),
     });
     this.audio = new AudioManager({ random: () => this.audioRandom.next() });
-    this.hud = new HUD(this.app);
+    this.hud = new HUD(this.app, {
+      onReplay: () => this.restartMission(true),
+      onMainMenu: () => this.returnToMainMenu(),
+    });
     this.grenades = new GrenadeSystem({
       scene: this.renderer.scene,
       camera: this.player.camera,
       colliders: this.routeColliders,
       getPlayerPosition: () => this.player.getPositionRef(),
       onPlayerDamage: (amount) => this.applyFragSplashToPlayer(amount),
-      onThrow: (remaining) => this.hud.showInteract(`FRAG OUT — ${remaining} REMAINING`),
+      onThrow: () => {
+        // Arm only — syncMissionHud owns the shared interact slot, so a direct
+        // showInteract here is overwritten the same tick by wave/jammer/null.
+        this.fragToastTimer = 2.4;
+      },
       onExplode: ({ position, radius, distanceToCamera }) => {
         this.vfx.spawnExplosion(position, 1.15);
         this.audio.playExplosion(distanceToCamera, radius);
@@ -525,9 +576,12 @@ class Game {
       {
         onPlay: (settings) => this.startGame(settings),
         onSettingsChange: (settings) => this.applySettings(settings),
+        onRestart: () => this.restartMission(true),
+        onReturnToMenu: () => this.returnToMainMenu(),
       },
       this.app,
     );
+    this.menu.setLoading(true);
     if (this.releaseMode) {
       this.setReleaseAssetGate('Validating the authored NIGHTGLASS asset package.');
     }
@@ -540,6 +594,7 @@ class Game {
     window.addEventListener('resize', this.onResize);
     document.addEventListener('pointerlockchange', this.onPointerLock);
     window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('blur', this.onWindowBlur);
 
     // Prevent context menu on canvas during ADS
     this.renderer.renderer.domElement.addEventListener('contextmenu', (e) =>
@@ -549,6 +604,10 @@ class Game {
     this.syncPostSize();
     this.clock.start();
     this.physicsReady = this.initializePhysics();
+    void this.physicsReady.finally(() => {
+      if (this.lifecycle.is('loading')) this.setLifecycle('ready');
+      this.menu.setLoading(false);
+    });
     void this.initializeAuthoredEnvironment();
     this.loop();
   }
@@ -563,7 +622,8 @@ class Game {
     this.weapons.setToggleADS(settings.toggleADS ?? false);
     this.audio.setVolume('master', settings.masterVolume);
     this.audio.setVolume('sfx', settings.sfxVolume);
-    this.hud.setCrosshairVisible(settings.showCrosshair ?? true);
+    this.crosshairEnabled = settings.showCrosshair ?? true;
+    this.hud.setCrosshairVisible(this.crosshairEnabled && !this.weapons.isADS());
     this.hud.setReducedMotion(settings.reducedMotion ?? false);
     this.applyGraphicsQuality(settings.graphicsTier ?? 'auto');
   }
@@ -574,11 +634,30 @@ class Game {
    * loaders, so a settings change cannot leave quality subsystems disagreeing.
    */
   private applyGraphicsQuality(preference: QualityPreference): void {
+    const preferenceChanged = preference !== this.qualityPreference;
+    this.qualityPreference = preference;
+    this.app.dataset.qualityPreference = preference;
+    // Other settings share the same callback. Do not let a volume/FOV change
+    // silently undo a runtime AUTO downgrade by reselecting the capability tier.
+    if (!preferenceChanged && preference === 'auto') return;
+    this.adaptiveQuality.reset();
     const next = selectQualityProfile(this.graphicsCapabilities, preference).profile;
+    this.applyResolvedGraphicsQuality(next);
+  }
+
+  private applyResolvedGraphicsQuality(next: QualityProfile): void {
+    // PLAY reapplies the menu settings. Avoid rebuilding post targets,
+    // traversing every texture and touching CSM when AUTO already resolved to
+    // the profile installed during bootstrap.
+    if (qualityProfilesEqual(next, this.quality)) {
+      this.app.dataset.qualityTier = next.tier;
+      return;
+    }
     const csmChanged = next.shadowCascades !== this.quality.shadowCascades
       || next.shadowDistance !== this.quality.shadowDistance
       || next.shadowMapSize !== this.quality.shadowMapSize;
     this.quality = next;
+    this.app.dataset.qualityTier = next.tier;
     this.renderer.applyQuality(next);
     this.post.applyQuality(next);
     this.lighting.applyQuality(next);
@@ -621,14 +700,13 @@ class Game {
     helper.name = 'CSMQualityAssuranceHelper';
     helper.visible = false;
     this.renderer.scene.add(helper);
+    initializeCsmHelper(helper);
     return helper;
   }
 
   private recreateCSM(profile: QualityProfile): void {
     const helperVisible = this.csmHelper.visible;
-    this.csmHelper.removeFromParent();
-    this.csmHelper.dispose();
-    this.csm.dispose();
+    disposeCsm(this.csm, this.csmHelper);
     this.csm = this.createCSM(profile);
     this.csmHelper = this.createCSMHelper(this.csm);
     this.csmHelper.visible = helperVisible;
@@ -667,6 +745,100 @@ class Game {
     this.lighting.applyHeightFog(material);
   }
 
+  private setLifecycle(state: Parameters<GameLifecycle['transition']>[0]): void {
+    this.lifecycle.transition(state);
+    this.app.dataset.gameState = state;
+  }
+
+  private pauseGame(showMenu = true): void {
+    if (!this.lifecycle.is('playing')) return;
+    this.setLifecycle('paused');
+    this.paused = true;
+    this.player.beginInputSuspend();
+    this.simulation.setPaused(true);
+    this.hud.showControlPrompt(null);
+    if (showMenu) {
+      this.menu.setInSession(true);
+      this.menu.show();
+      this.hud.setVisible(false);
+    }
+  }
+
+  private resumeGame(): void {
+    if (!this.lifecycle.is('paused')) return;
+    this.setLifecycle('playing');
+    this.paused = false;
+    this.player.endInputSuspend();
+    this.simulation.setPaused(false);
+    this.menu.hide();
+    this.hud.setVisible(true);
+    this.hud.showControlPrompt(null);
+    this.showControlsIntro();
+  }
+
+  private showControlsIntro(): void {
+    if (this.mission.getElapsed() > 0.2) return;
+    if (this.controlsIntroTimer !== undefined) window.clearTimeout(this.controlsIntroTimer);
+    this.hud.showControlPrompt('WASD MOVE  //  RMB AIM  //  LMB FIRE  //  E/F INTERACT');
+    this.controlsIntroTimer = window.setTimeout(() => {
+      this.controlsIntroTimer = undefined;
+      if (this.pointerLockAcquired) this.hud.showControlPrompt(null);
+    }, 5200);
+  }
+
+  private armPointerPrompt(): void {
+    if (this.pointerPromptTimer !== undefined) window.clearTimeout(this.pointerPromptTimer);
+    this.pointerPromptTimer = window.setTimeout(() => {
+      this.pointerPromptTimer = undefined;
+      if (this.playing && !this.pointerLockAcquired && this.menu.isVisible() === false) {
+        this.hud.showControlPrompt('CLICK THE GAME TO CAPTURE THE MOUSE');
+      }
+    }, 450);
+  }
+
+  private restartMission(requestLock: boolean): void {
+    if (this.lifecycle.is('loading')) return;
+    this.resetRunToOpening();
+    this.hud.clearMissionResult();
+    this.hud.clearKillfeed();
+    this.hud.clearHitmarker();
+    this.hud.clearCheckpoint();
+    this.hud.clearDamage();
+    this.post.setDamageIntensity(0);
+    this.playing = true;
+    this.paused = false;
+    this.menu.setInSession(true);
+    this.menu.hide();
+    this.hud.setVisible(true);
+    if (!this.lifecycle.is('playing')) this.setLifecycle('playing');
+    this.syncMissionHud();
+    this.syncAmmoHud();
+    if (requestLock) this.player.requestPointerLock(this.renderer.renderer.domElement);
+    if (!this.pointerLockAcquired) {
+      this.pauseGame(false);
+      this.armPointerPrompt();
+    } else {
+      this.showControlsIntro();
+    }
+  }
+
+  private returnToMainMenu(): void {
+    if (document.pointerLockElement) document.exitPointerLock();
+    if (!this.lifecycle.is('ready')) this.setLifecycle('ready');
+    this.playing = false;
+    this.paused = false;
+    this.pointerLockAcquired = false;
+    this.player.beginInputSuspend();
+    this.player.clearInput();
+    this.resetRunToOpening();
+    this.hud.clearMissionResult();
+    this.hud.showControlPrompt(null);
+    this.hud.setVisible(false);
+    this.menu.setInSession(false);
+    this.menu.show();
+    this.post.setCamera(this.renderer.camera);
+  }
+
   private async startGame(settings: MainMenuSettings): Promise<void> {
     this.applySettings(settings);
     if (!this.canLaunchRelease()) {
@@ -680,17 +852,24 @@ class Game {
       // killfeed rows so the opening does not carry spent-run combat telemetry.
       this.hud.clearKillfeed();
       this.hud.clearHitmarker();
+      this.hud.clearCheckpoint();
       this.post.setDamageIntensity(0);
       this.hud.clearDamage();
     }
-    await this.audio.unlock();
+    // AudioContext.resume() is allowed to remain pending indefinitely when a
+    // browser or embedded webview declines autoplay activation. Sound is an
+    // enhancement, not a launch gate: the gesture listener will keep trying,
+    // while physics and gameplay are allowed to start immediately.
+    void this.audio.unlock();
     // Rapier bind (or explicit init failure → AABB fallback) must settle before
     // play so movement never swaps AABB→Rapier authority mid-run.
     await this.physicsReady;
+    if (this.lifecycle.is('loading')) this.setLifecycle('ready');
     this.menu.hide();
     this.hud.setVisible(true);
     this.playing = true;
     this.paused = false;
+    if (!this.lifecycle.is('playing')) this.setLifecycle('playing');
     // Pause unlock uses beginInputSuspend so still-held WASD survive clearInput
     // (same stuck-keys class as death restore). Fresh Play just clears.
     this.player.endInputSuspend();
@@ -719,6 +898,12 @@ class Game {
 
     // Pointer lock after user gesture (Play click)
     this.player.requestPointerLock(this.renderer.renderer.domElement);
+    if (!this.pointerLockAcquired) {
+      this.pauseGame(false);
+      this.armPointerPrompt();
+    } else {
+      this.showControlsIntro();
+    }
   }
 
   private handleFire(
@@ -799,10 +984,12 @@ class Game {
 
   private combatDamageLive(): boolean {
     return shouldApplyCombatDamage({
-      playing: this.playing,
+      playing: this.playing && this.lifecycle.acceptsCombat(),
       paused: this.paused,
       playerDead: this.player.isDead(),
       beat: this.mission.getBeat(),
+      missionElapsed: this.mission.getElapsed(),
+      openingProtectionSeconds: OPENING_DAMAGE_GRACE_SECONDS,
     });
   }
 
@@ -828,6 +1015,8 @@ class Game {
 
   private onPlayerDeath(): void {
     if (this.deathRestoreRemaining !== null) return;
+    if (this.lifecycle.is('playing')) this.setLifecycle('failed');
+    this.deaths += 1;
     this.mission.markFailed();
     this.hud.showMissionResult({
       kind: 'failed',
@@ -866,22 +1055,28 @@ class Game {
       this.enemies.restoreState(checkpoint.enemies);
       this.simulationRandom.restore(checkpoint.randomState);
       this.hostileKills = checkpoint.hostileKills;
+      this.supplies = { ...checkpoint.supplies };
       // World/RNG rewind without the session clock leaves AI fork(tick) salts
       // on the post-death timeline — restore both clocks to the checkpoint epoch.
       this.restoreSimulationClock(checkpoint.tick);
       // Death delay still runs grenades/AI: an in-flight frag wipe (or wave
       // pulse) can leave lastAliveCount at 0, then restored hostiles falsely
       // toast a "new wave" — same latch rematch already applies.
-      this.lastAliveCount = this.enemies.getAlive().length;
+      this.lastAliveCount = this.enemies.getAliveCount();
       this.waveToastTimer = 0;
+      this.fragToastTimer = 0;
       // restoreState already clearInput'd then reapplied crouch/slide. A second
       // clearInput here would wipe slideTimer / sliding and stand you up vs the
       // jammer checkpoint pose — only resync physical holds that never got keyup.
     } else {
-      this.resetRunToOpening();
+      this.resetRunToOpening(false);
       this.player.clearInput();
     }
     this.player.resyncHeldKeys(heldKeys);
+    // Pause does not run CameraFeel; death delay can also freeze a slide dip.
+    // Snap view impulses so the restored pose is not wearing the killing blow.
+    this.cameraFeel.resetView(this.weapons.isADS());
+    this.rewindCombatFx();
     this.post.setDamageIntensity(0);
     this.hud.clearDamage();
     this.hud.clearMissionResult();
@@ -900,6 +1095,14 @@ class Game {
       maxArmor: this.player.maxArmor,
     });
     this.player.requestPointerLock(this.renderer.renderer.domElement);
+    if (this.pointerLockAcquired) {
+      if (!this.lifecycle.is('playing')) this.setLifecycle('playing');
+      this.paused = false;
+    } else {
+      if (!this.lifecycle.is('paused')) this.setLifecycle('paused');
+      this.paused = true;
+      this.armPointerPrompt();
+    }
   }
 
   /**
@@ -914,22 +1117,39 @@ class Game {
     this.pendingSquadEvents.length = 0;
   }
 
+  /**
+   * World-space combat FX is not in any snapshot. Pause and QA freeze the
+   * pools, so rematch / death / session restore would keep the discarded
+   * timeline's muzzle sparks, blood, blast cloud, and ~45s bullet holes.
+   */
+  private rewindCombatFx(): void {
+    this.vfx.clearCombat();
+    this.decals.clear();
+  }
+
   /** Full clean start: mission, combatants, and loadout match a fresh run. */
-  private resetRunToOpening(): void {
+  private resetRunToOpening(resetRunStats = true): void {
     this.mission.reset();
     this.grenades.reset();
     this.weapons.reset();
     this.enemies.resetToInitial();
     // Rematch/early-death used to keep lastAliveCount at 0 after a wipe, so the
     // next spawn pulse falsely toasted a new wave. Latch the rebuilt roster.
-    this.lastAliveCount = this.enemies.getAlive().length;
+    this.lastAliveCount = this.enemies.getAliveCount();
     this.waveToastTimer = 0;
+    this.fragToastTimer = 0;
     this.runtimeCheckpoint = null;
     this.hostileKills = 0;
+    if (resetRunStats) this.deaths = 0;
+    this.supplies = { firstContact: false, intersection: false, defense: false };
     // Rebuild alone left the combat PRNG and session clock on the spent run —
     // rematch then polluted fork(tick) salts. Reset both to opening.
     this.simulationRandom.restore(this.simulationSeed);
     this.restoreSimulationClock(0);
+    // Extract pause freezes CameraFeel; rematch would spawn in leftover ADS FOV
+    // / slide dip / recoil punch from the spent run.
+    this.cameraFeel.resetView(false);
+    this.rewindCombatFx();
     this.player.revive(true);
     this.player.setPosition(
       this.level.playerSpawn.x,
@@ -940,6 +1160,11 @@ class Game {
 
   private syncAmmoHud(): void {
     const ammo = this.weapons.getAmmo();
+    this.hud.setWeaponStatus(this.weapons.isReloading()
+      ? 'RELOADING'
+      : ammo && ammo.mag <= Math.max(1, Math.floor(ammo.magSize * 0.25))
+        ? ammo.reserve > 0 ? '[R] RELOAD' : ammo.mag === 0 ? 'NO AMMO · [2] SIDEARM' : 'LOW AMMO'
+        : '');
     if (ammo) {
       this.hud.setAmmo({
         magazine: ammo.mag,
@@ -968,15 +1193,23 @@ class Game {
   }
 
   private onPointerLock = (): void => {
-    if (!this.playing) return;
-    if (document.pointerLockElement === null && !this.player.isDead()) {
-      this.paused = true;
-      // Snapshot holds before clear — Esc unlock drops pointer lock without
-      // keyup, so resume must resyncHeldKeys or WASD stay dead until repress.
-      this.player.beginInputSuspend();
-      this.simulation.setPaused(true);
-      this.menu.show();
-      this.hud.setVisible(false);
+    if (document.pointerLockElement !== null) {
+      // The menu requests lock during the user gesture, before async audio and
+      // physics startup completes. Remember that acquisition even while the
+      // game is not marked playing yet so a later Esc still pauses correctly.
+      this.pointerLockAcquired = true;
+      if (this.playing && this.lifecycle.is('paused') && !this.menu.isVisible()) {
+        this.resumeGame();
+      }
+      return;
+    }
+    // A rejected initial request may emit pointerlockchange with a null
+    // element. It is not a pause: keep gameplay running so the player can click
+    // the canvas to retry instead of being trapped behind the menu forever.
+    if (!this.playing || !this.pointerLockAcquired) return;
+    this.pointerLockAcquired = false;
+    if (!this.player.isDead()) {
+      this.pauseGame(true);
     }
   };
 
@@ -984,18 +1217,55 @@ class Game {
     if (e.code === 'Escape' && this.playing) {
       if (document.pointerLockElement) {
         document.exitPointerLock();
+      } else if (this.lifecycle.is('playing')) {
+        this.pauseGame(true);
       }
+    }
+  };
+
+  private onWindowBlur = (): void => {
+    if (this.playing && this.lifecycle.is('playing') && !this.player.isDead()) {
+      this.pauseGame(true);
     }
   };
 
   private loop = (frameTimestamp = performance.now()): void => {
     this.animId = requestAnimationFrame(this.loop);
+    // The title backdrop covers the world. Keep its idle camera alive at a
+    // modest cadence while DOM controls remain responsive at display refresh.
+    if (!this.playing && !this.qaFrozen && !this.releaseMode) {
+      if (frameTimestamp - this.previousTitleRender < 1000 / 15) return;
+      this.previousTitleRender = frameTimestamp;
+    }
+    const rawFrameMs = this.previousFrameTimestamp === null
+      ? 0
+      : frameTimestamp - this.previousFrameTimestamp;
+    this.previousFrameTimestamp = frameTimestamp;
     const mainThreadStartedAt = performance.now();
     this.renderer.beginPerformanceFrame(frameTimestamp);
     const dt = this.clock.getDelta();
 
     let interpolationAlpha = 1;
-    if (this.playing && !this.paused && !this.menu.isVisible() && !this.qaFrozen) {
+    const activeGameplay = this.playing
+      && this.lifecycle.canSimulate()
+      && !this.paused
+      && !this.menu.isVisible()
+      && !this.qaFrozen;
+    const qualityDecision = activeGameplay
+      && this.qualityPreference === 'auto'
+      && rawFrameMs > 0
+      ? this.adaptiveQuality.sample(rawFrameMs, this.quality.tier)
+      : null;
+    if (activeGameplay && this.qualityPreference === 'auto') {
+      this.frameTelemetryCountdown -= 1;
+      if (this.frameTelemetryCountdown <= 0) {
+        const pacing = this.adaptiveQuality.getTelemetry();
+        this.app.dataset.frameMs = pacing.averageFrameMs.toFixed(2);
+        this.app.dataset.slowFrameRatio = pacing.slowFrameRatio.toFixed(3);
+        this.frameTelemetryCountdown = 60;
+      }
+    }
+    if (activeGameplay) {
       this.simulation.setPaused(false);
       const frame = this.simulation.advance(dt, () => {
         this.gameSession.enqueueInput(
@@ -1044,6 +1314,19 @@ class Game {
     if (this.playing) this.renderer.renderViewModel();
     this.renderer.endFrameStats();
     this.renderer.endPerformanceFrame(performance.now() - mainThreadStartedAt);
+    if (qualityDecision) {
+      const previousTier = this.quality.tier;
+      const next = selectQualityProfile(
+        this.graphicsCapabilities,
+        qualityDecision.nextTier,
+      ).profile;
+      this.applyResolvedGraphicsQuality(next);
+      this.app.dataset.autoQualityAdjusted = 'true';
+      console.info(
+        `[performance] AUTO reduced ${previousTier} → ${this.quality.tier} after sustained frame pressure`,
+        qualityDecision,
+      );
+    }
   };
 
   private applyPlayerIntent(dt: number): void {
@@ -1064,7 +1347,7 @@ class Game {
         .splice(0)
         .map(({ event, agentId }) => ({ type: 'squad', tick, event, agentId }));
 
-      const alive = this.enemies.getAlive().length;
+      const alive = this.enemies.getAliveCount();
       if (this.lastAliveCount === 0 && alive > 0) {
         // Arm the toast timer only — syncMissionHud owns the shared interact slot
         // so jammer prompts are not wiped when this timer expires mid-objective.
@@ -1095,7 +1378,7 @@ class Game {
       firstContactComplete: this.hostileKills >= 2,
       intersectionClear: this.hostileKills >= 6,
       jammerDisabled: jammerDisabled || undefined,
-      hostilesAlive: this.enemies.getAlive().length,
+      hostilesAlive: this.enemies.getAliveCount(),
       playerHealthFraction: this.player.health / this.player.maxHealth,
     });
   }
@@ -1115,8 +1398,8 @@ class Game {
     for (const event of events) {
       if (event.type !== 'shot') continue;
       this.enemies.notifyPlayerFire(
-        new Vector3(event.origin.x, event.origin.y, event.origin.z),
-        new Vector3(event.direction.x, event.direction.y, event.direction.z),
+        this.shotOrigin.set(event.origin.x, event.origin.y, event.origin.z),
+        this.shotDirection.set(event.direction.x, event.direction.y, event.direction.z),
       );
     }
     return events;
@@ -1130,6 +1413,7 @@ class Game {
     // Mission combat state already advanced in updateNavigationAndAI so the
     // squad directive matches this tick's beat; this phase is presentation only.
     this.updateDeathRestore(dt);
+    if (this.fragToastTimer > 0) this.fragToastTimer -= dt;
     this.syncMissionHud();
 
     // Traversal cues are consumed here so camera and audio react to the same
@@ -1189,6 +1473,9 @@ class Game {
     this.hud.setCompassYaw(this.player.getYaw());
 
     // Crosshair half-gap tracks the real hitscan cone (move + fire bloom + ADS).
+    // Reflex sights own the centre point while aiming; leaving the hip crosshair
+    // active produced a white debug cross over the projected red dot.
+    this.hud.setCrosshairVisible(this.crosshairEnabled && !this.weapons.isADS());
     this.hud.setCrosshairFromWeaponSpread(this.weapons.getCurrentSpread());
 
     const dmgIntensity = MathUtilsClamp(
@@ -1266,7 +1553,11 @@ class Game {
       grenadeCount: this.grenades.getRemaining(),
       grenades: this.grenades.snapshotState(),
       mission: this.mission.snapshot(),
-      encounter: { hostileKills: this.hostileKills },
+      encounter: {
+        hostileKills: this.hostileKills,
+        deaths: this.deaths,
+        supplies: { ...this.supplies },
+      },
       ai: this.enemies.snapshotState(),
     };
   }
@@ -1330,16 +1621,38 @@ class Game {
     );
     this.mission.restore(snapshot.mission as ReturnType<MissionDirector['snapshot']>);
     this.enemies.restoreState(snapshot.ai as ReturnType<EnemyManager['snapshotState']>);
-    this.hostileKills = Number((snapshot.encounter as { hostileKills?: number }).hostileKills ?? 0);
+    const encounter = snapshot.encounter as {
+      hostileKills?: number;
+      deaths?: number;
+      supplies?: Partial<RunSupplies>;
+    };
+    this.hostileKills = Number(encounter.hostileKills ?? 0);
+    this.deaths = Number(encounter.deaths ?? 0);
+    this.supplies = {
+      firstContact: encounter.supplies?.firstContact === true,
+      intersection: encounter.supplies?.intersection === true,
+      defense: encounter.supplies?.defense === true,
+    };
     // Wipe→snapshot.restore left lastAliveCount at 0 while hostiles came back;
     // the next AI tick then falsely armed a "new wave" toast (death/rematch
     // already re-latch). Clear any in-flight toast too.
-    this.lastAliveCount = this.enemies.getAlive().length;
+    this.lastAliveCount = this.enemies.getAliveCount();
     this.waveToastTimer = 0;
+    this.fragToastTimer = 0;
     // hostileKills rewound with the snapshot — drop killfeed that belonged to
     // the pre-restore timeline (death/rematch/QA already clear). Hitmarker too.
     this.hud.clearKillfeed();
     this.hud.clearHitmarker();
+    // Checkpoint toast is event-driven, not health-synced — a pre-rewind
+    // "Jammer secured" would otherwise linger on the restored timeline.
+    this.hud.clearCheckpoint();
+    // Damage vignette/flash is set on hit, not health-synced. Presentation only
+    // calls clearDamage when HP is nearly full, so a 20 HP hit would keep its
+    // vignette after restoring 80 HP. Death/rematch/QA already clear this.
+    this.post.setDamageIntensity(0);
+    this.hud.clearDamage();
+    this.cameraFeel.resetView(this.weapons.isADS());
+    this.rewindCombatFx();
   }
 
   private handleSessionEvent(_event: GameEvent): void {
@@ -1348,7 +1661,11 @@ class Game {
   }
 
   private handleMissionEvent(event: MissionEvent): void {
-    if (event.type === 'checkpoint-saved') {
+    if (event.type === 'encounter-complete') {
+      if (event.beat === 'insertion') this.grantEncounterSupply('firstContact', 'CONTACT CLEARED');
+      if (event.beat === 'intersection') this.grantEncounterSupply('intersection', 'INTERSECTION SECURED');
+      if (event.beat === 'jammer') this.grantEncounterSupply('defense', 'DEFENSE CACHE ACQUIRED');
+    } else if (event.type === 'checkpoint-saved') {
       this.runtimeCheckpoint = this.captureRuntimeCheckpoint();
       this.hud.showCheckpoint('Jammer secured — defense checkpoint');
       this.audio.playUIClick();
@@ -1362,11 +1679,16 @@ class Game {
         subtitle: resolveDeathRestoreSubtitle(!!(event.checkpoint ?? this.runtimeCheckpoint)),
       });
     } else if (event.type === 'mission-complete') {
+      if (this.lifecycle.is('playing')) this.setLifecycle('completed');
+      if (document.pointerLockElement) document.exitPointerLock();
       this.hud.showMissionResult({
         kind: 'completed',
         title: 'Nightglass secured',
         subtitle: 'Extraction confirmed. Hostile signal network is offline.',
-        action: 'Press Esc for the operations menu',
+        action: 'Mission record saved for this session',
+        elapsedSeconds: this.mission.getElapsed(),
+        kills: this.hostileKills,
+        deaths: this.deaths,
       });
       // Snapshot holds so Esc → Play rematch can resync WASD (bare clearInput
       // left extract-sprint empty for beginInputSuspend on pointer unlock).
@@ -1386,7 +1708,19 @@ class Game {
       enemies: this.enemies.snapshotState(),
       randomState: this.simulationRandom.snapshot(),
       hostileKills: this.hostileKills,
+      supplies: { ...this.supplies },
     };
+  }
+
+  private grantEncounterSupply(key: keyof RunSupplies, label: string): void {
+    if (this.supplies[key]) return;
+    this.supplies[key] = true;
+    const added = this.weapons.resupply({ ar: 36, pistol: 12 });
+    this.player.heal(32);
+    this.player.addArmor(18);
+    this.hud.showCheckpoint(`${label} — +${added.ar + added.pistol} AMMO / MEDICAL`);
+    this.audio.playUIClick();
+    this.syncAmmoHud();
   }
 
   /**
@@ -1400,7 +1734,7 @@ class Game {
     let pendingLoaderDispose: (() => void) | null = null;
     let presentationInstalled = false;
     try {
-      const response = await fetch('/assets/manifest.json');
+      const response = await fetch(assetUrl('assets/manifest.json'));
       if (!response.ok) throw new Error(`asset manifest ${response.status}`);
       const manifest = await response.json() as import('./engine').AssetManifest;
       const contract = validateNightglassAssetContract(manifest);
@@ -1943,8 +2277,9 @@ class Game {
     this.runtimeCheckpoint = null;
     this.deathRestoreRemaining = null;
     this.hostileKills = 0;
-    this.lastAliveCount = this.enemies.getAlive().length;
+    this.lastAliveCount = this.enemies.getAliveCount();
     this.waveToastTimer = 0;
+    this.fragToastTimer = 0;
     this.pendingSessionEvents.length = 0;
     this.post.setDamageIntensity(0);
     this.hud.clearDamage();
@@ -1953,6 +2288,9 @@ class Game {
     // hostileKills, so leftover killfeed / hitmarker must not pollute QA.
     this.hud.clearKillfeed();
     this.hud.clearHitmarker();
+    this.hud.clearCheckpoint();
+    this.cameraFeel.resetView(this.weapons.isADS());
+    this.rewindCombatFx();
     // Capture states share one page load. Restore RNG without the session
     // clock and later scenarios fork(tick) at leftover hip/ads ticks.
     if (this.qaTickBaseline !== null) {
@@ -2113,6 +2451,19 @@ class Game {
 
   private syncMissionHud(): void {
     const state = this.mission.getDebugState();
+    const position = this.player.getPositionRef();
+    const target = state.beat === 'insertion'
+      ? { x: 0, z: 6 }
+      : state.beat === 'intersection'
+        ? { x: 0, z: 17 }
+        : state.beat === 'jammer' || state.beat === 'defense'
+          ? { x: 0, z: 19 }
+          : state.beat === 'extraction'
+            ? { x: 0, z: 30 }
+            : null;
+    const distance = target
+      ? Math.ceil(Math.hypot(position.x - target.x, position.z - target.z))
+      : null;
     const descriptions: Record<string, string> = {
       insertion: 'Push through the southern approach',
       intersection: 'Use cover and break the hostile line',
@@ -2124,10 +2475,22 @@ class Game {
     };
     this.hud.setObjective({
       title: this.mission.getObjectiveText(),
-      description: descriptions[state.beat],
+      description: `${descriptions[state.beat]}${distance === null ? '' : `  //  ${distance} M`}`,
       status: state.beat === 'failed' ? 'failed' : state.beat === 'complete' ? 'completed' : 'active',
-      progress: state.beat === 'defense' ? 1 - state.defenseRemaining / 90 : undefined,
-      progressLabel: state.beat === 'defense' ? `${Math.ceil(state.defenseRemaining)} SEC` : undefined,
+      progress: state.beat === 'insertion'
+        ? Math.min(1, this.hostileKills / 2)
+        : state.beat === 'intersection'
+          ? Math.min(1, Math.max(0, this.hostileKills - 2) / 4)
+          : state.beat === 'defense'
+            ? 1 - state.defenseRemaining / 90
+            : undefined,
+      progressLabel: state.beat === 'insertion'
+        ? `${Math.min(2, this.hostileKills)} / 2 HOSTILES`
+        : state.beat === 'intersection'
+          ? `${Math.min(4, Math.max(0, this.hostileKills - 2))} / 4 HOSTILES`
+          : state.beat === 'defense'
+            ? `${Math.ceil(state.defenseRemaining)} SEC`
+            : undefined,
     });
     // Interact beats wave toast; toast keeps the slot while its timer runs.
     this.hud.showInteract(
@@ -2135,6 +2498,8 @@ class Game {
         jammerInteractAvailable:
           state.beat === 'jammer' && this.canInteractWithJammer(),
         waveToastRemaining: this.waveToastTimer,
+        fragToastRemaining: this.fragToastTimer,
+        fragCount: this.grenades.getRemaining(),
       }),
     );
   }
@@ -2144,6 +2509,9 @@ class Game {
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('pointerlockchange', this.onPointerLock);
     window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('blur', this.onWindowBlur);
+    if (this.pointerPromptTimer !== undefined) window.clearTimeout(this.pointerPromptTimer);
+    if (this.controlsIntroTimer !== undefined) window.clearTimeout(this.controlsIntroTimer);
     this.disposeDevelopmentRipstop();
     this.weapons.dispose();
     this.grenades.dispose();
@@ -2162,9 +2530,7 @@ class Game {
     this.assetRegistry?.dispose();
     this.threeAssetLoadersDispose?.();
     this.threeAssetLoadersDispose = null;
-    this.csmHelper.removeFromParent();
-    this.csmHelper.dispose();
-    this.csm.dispose();
+    disposeCsm(this.csm, this.csmHelper);
     this.lighting.dispose();
     this.environment.dispose();
     this.post.dispose();
@@ -2172,6 +2538,7 @@ class Game {
     this.hud.dispose();
     this.menu.dispose();
     this.audio.dispose();
+    this.clock.dispose();
   }
 }
 
@@ -2186,6 +2553,22 @@ function authoredRouteModules(): EnvironmentModulePlacement[] {
 
 function MathUtilsClamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
+}
+
+function qualityProfilesEqual(a: QualityProfile, b: QualityProfile): boolean {
+  return a.tier === b.tier
+    && a.maxPixelRatio === b.maxPixelRatio
+    && a.renderScale === b.renderScale
+    && a.shadowMapSize === b.shadowMapSize
+    && a.shadowCascades === b.shadowCascades
+    && a.shadowDistance === b.shadowDistance
+    && a.ambientOcclusion === b.ambientOcclusion
+    && a.bloom === b.bloom
+    && a.volumetricFog === b.volumetricFog
+    && a.textureAnisotropy === b.textureAnisotropy
+    && a.particleMultiplier === b.particleMultiplier
+    && a.maxDynamicLights === b.maxDynamicLights
+    && a.lodBias === b.lodBias;
 }
 
 function clearInputEdges(input: Readonly<InputFrame>): InputFrame {
@@ -2242,15 +2625,15 @@ declare global {
   }
 }
 
+if (import.meta.env.DEV || import.meta.env.VITE_ENABLE_QA === '1') {
 window.__BLACKOPS__ = {
   start: async () => {
     if (!game['canLaunchRelease']()) {
       game['menu'].show();
       return;
     }
-    // This hook exists for deterministic browser capture, where an AudioContext
-    // may remain suspended forever because there is no user gesture. Normal
-    // menu-driven launch still awaits audio unlock in startGame().
+    // Audio unlock is deliberately best-effort: browsers may retain a
+    // suspended AudioContext even after an automated or embedded gesture.
     void game['audio'].unlock();
     game['menu'].hide();
     game['hud'].setVisible(true);
@@ -2319,5 +2702,6 @@ window.__BLACKOPS__ = {
     };
   },
 };
+}
 
 void game;

@@ -240,19 +240,29 @@ export function setupLighting(
       shader.uniforms.nightglassFogColor = heightFogColor;
       shader.uniforms.nightglassFogSunColor = heightFogSunColor;
       shader.uniforms.nightglassFogSunDirection = heightFogSunDirection;
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          '#include <common>',
-          '#include <common>\nvarying vec3 vNightglassWorldPosition;',
-        )
-        .replace(
-          '#include <begin_vertex>',
-          '#include <begin_vertex>\nvNightglassWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;',
-        );
-      shader.fragmentShader = shader.fragmentShader
-        .replace(
-          '#include <common>',
-          `#include <common>
+      // Quality changes and late-loaded development props can make CSM wrap a
+      // material that already carries our fog callback. Those wrappers call
+      // the old hook before the new one, so checking only callback identity is
+      // insufficient: both hooks receive the same mutable shader and used to
+      // inject duplicate varyings/uniforms, making the whole program fail to
+      // compile. Shader-source guards keep the patch idempotent regardless of
+      // how CSM or another material extension composes the callbacks.
+      if (!shader.vertexShader.includes('varying vec3 vNightglassWorldPosition;')) {
+        shader.vertexShader = shader.vertexShader
+          .replace(
+            '#include <common>',
+            '#include <common>\nvarying vec3 vNightglassWorldPosition;',
+          )
+          .replace(
+            '#include <begin_vertex>',
+            '#include <begin_vertex>\nvNightglassWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;',
+          );
+      }
+      if (!shader.fragmentShader.includes('uniform float nightglassFogDensity;')) {
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            `#include <common>
 varying vec3 vNightglassWorldPosition;
 uniform float nightglassFogDensity;
 uniform float nightglassFogBase;
@@ -271,7 +281,8 @@ float nightglassFogFactor = 1.0 - exp(-nightglassFogDistance * nightglassFogDens
 float nightglassFogSun = max(dot(normalize(nightglassFogView + vec3(0.0, 0.0001, 0.0)), nightglassFogSunDirection), 0.0);
 vec3 nightglassHaze = mix(nightglassFogColor, nightglassFogSunColor, pow(nightglassFogSun, 3.0) * 0.55);
 gl_FragColor.rgb = mix(gl_FragColor.rgb, nightglassHaze, clamp(nightglassFogFactor, 0.0, 0.68));`,
-        );
+          );
+      }
     };
     material.customProgramCacheKey = () => `${baseProgramKey()}|nightglass-height-fog-v2`;
     fogCompileCallbacks.set(material, material.onBeforeCompile);

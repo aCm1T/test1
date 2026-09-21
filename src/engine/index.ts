@@ -75,6 +75,13 @@ export {
 } from './Quality';
 
 export {
+  AdaptiveQualityController,
+  type AdaptiveQualityOptions,
+  type AdaptiveQualityDecision,
+  type AdaptiveQualityTelemetry,
+} from './AdaptiveQuality';
+
+export {
   AssetRegistry,
   createFetchAssetLoaders,
   validateManifest,

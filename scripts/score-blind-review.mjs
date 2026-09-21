@@ -45,8 +45,10 @@ const summary = {
 };
 writeJson(path.join(ROUND_DIR, 'summary.json'), summary);
 if (!summary.releasePass) {
-  console.error('blind review release gate: BLOCKED');
-  console.error(JSON.stringify(summary, null, 2));
+  fs.writeSync(
+    process.stderr.fd,
+    `blind review release gate: BLOCKED\n${JSON.stringify(summary, null, 2)}\n`,
+  );
   process.exit(1);
 }
 console.log(
@@ -240,6 +242,6 @@ function writeJson(file, value) {
 }
 
 function fail(message) {
-  console.error(`blind review release gate: BLOCKED — ${message}`);
+  fs.writeSync(process.stderr.fd, `blind review release gate: BLOCKED — ${message}\n`);
   process.exit(1);
 }

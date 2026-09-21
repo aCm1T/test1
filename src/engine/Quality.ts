@@ -198,9 +198,18 @@ export function selectQualityProfile(
   options: QualitySelectionOptions = {},
 ): QualitySelection {
   const recommended = recommendQualityTier(capabilities);
-  const requestedTier = preference === 'auto' ? recommended : preference;
+  // WebGL limits describe API support, not actual fill-rate. A large class of
+  // integrated GPUs reports every capability required for Ultra, then stalls
+  // on 4K cascaded shadows. AUTO starts those ambiguous devices at High; Ultra
+  // remains available as an explicit choice on hardware recommended for it.
+  const autoTier = recommended === 'ultra' ? 'high' : recommended;
+  const requestedTier = preference === 'auto' ? autoTier : preference;
   let selectedTier = requestedTier;
   const reasons: string[] = [];
+
+  if (preference === 'auto' && autoTier !== recommended) {
+    reasons.push('auto reserves ultra for explicit selection because WebGL limits do not measure fill-rate');
+  }
 
   if (
     !options.allowAboveRecommended &&

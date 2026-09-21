@@ -340,7 +340,12 @@ describe('procedural fallback draw budget', () => {
       const mesh = node as THREE.InstancedMesh;
       if (!mesh.isInstancedMesh) return;
       colourDraws += 1;
-      if (mesh.castShadow) casters += 1;
+      if (!mesh.castShadow) return;
+      casters += 1;
+      const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      // Near caster shares matrices with the colour batch; beauty writes z-fight.
+      expect(material.colorWrite).toBe(false);
+      expect(material.depthWrite).toBe(false);
     });
 
     expect(colourDraws).toBeGreaterThan(0);

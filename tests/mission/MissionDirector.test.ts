@@ -212,6 +212,21 @@ describe('combat damage after extract', () => {
     expect(shouldApplyCombatDamage({ ...live, playerDead: true })).toBe(false);
     expect(shouldApplyCombatDamage({ ...live, playing: false })).toBe(false);
   });
+
+  it('keeps opening gunfire warning-only for the deterministic grace window', () => {
+    const opening = {
+      playing: true,
+      paused: false,
+      playerDead: false,
+      beat: 'insertion' as const,
+      openingProtectionSeconds: 2.5,
+    };
+    expect(shouldApplyCombatDamage({ ...opening, missionElapsed: 0 })).toBe(false);
+    expect(shouldApplyCombatDamage({ ...opening, missionElapsed: 2.49 })).toBe(false);
+    expect(shouldApplyCombatDamage({ ...opening, missionElapsed: 2.5 })).toBe(true);
+    expect(shouldApplyCombatDamage({ ...opening, missionElapsed: 10 })).toBe(true);
+    expect(shouldApplyCombatDamage({ ...opening, beat: 'intersection' })).toBe(true);
+  });
 });
 
 describe('SeededRandom', () => {

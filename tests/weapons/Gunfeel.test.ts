@@ -153,6 +153,66 @@ describe('viewmodel ADS blend', () => {
   });
 });
 
+describe('viewmodel rewind snap', () => {
+  it('resetPresentation drops kick, heat, brass and ADS blend a same-gun swap would keep', () => {
+    const viewmodel = createViewModel();
+    viewmodel.setPose('ads');
+    for (let i = 0; i < 8; i++) {
+      viewmodel.kickOnFire(1, true);
+      viewmodel.update(1 / 60);
+    }
+    expect(viewmodel.getRecoilOffset().pitch).not.toBe(0);
+    expect(viewmodel.getHeat()).toBeGreaterThan(0);
+    expect(viewmodel.getActiveCasingCount()).toBeGreaterThan(0);
+    expect(viewmodel.getAdsBlend()).toBeGreaterThan(0.3);
+    expect(viewmodel.muzzleFlash.visible).toBe(true);
+
+    // Rematch stays on the AR, so switchWeapon no-ops and would keep all this.
+    viewmodel.switchWeapon('ar');
+    expect(viewmodel.getRecoilOffset().pitch).not.toBe(0);
+    expect(viewmodel.getHeat()).toBeGreaterThan(0);
+
+    viewmodel.resetPresentation(false);
+    expect(viewmodel.getRecoilOffset()).toEqual({ pitch: 0, yaw: 0, roll: 0 });
+    expect(viewmodel.getLookLag()).toEqual({ yaw: 0, pitch: 0 });
+    expect(viewmodel.getHeat()).toBe(0);
+    expect(viewmodel.getAdsBlend()).toBe(0);
+    expect(viewmodel.getActiveCasingCount()).toBe(0);
+    expect(viewmodel.muzzleFlash.visible).toBe(false);
+    expect(viewmodel.getPose()).toBe('hip');
+
+    viewmodel.resetPresentation(true);
+    expect(viewmodel.getAdsBlend()).toBe(1);
+    expect(viewmodel.getPose()).toBe('ads');
+    viewmodel.dispose();
+  });
+
+  it('weapon reset and restore snap presentation when the AR is already out', () => {
+    const test = createWeapon(0x51a9);
+    fireShots(test, 4);
+    expect(test.weapon.getActiveTracerCount()).toBeGreaterThan(0);
+    expect(test.weapon.viewModel.getHeat()).toBeGreaterThan(0);
+    expect(test.weapon.viewModel.getRecoilOffset().pitch).not.toBe(0);
+
+    test.weapon.reset();
+    expect(test.weapon.getActiveTracerCount()).toBe(0);
+    expect(test.weapon.viewModel.getHeat()).toBe(0);
+    expect(test.weapon.viewModel.getRecoilOffset()).toEqual({ pitch: 0, yaw: 0, roll: 0 });
+    expect(test.weapon.viewModel.getAdsBlend()).toBe(0);
+    test.weapon.dispose();
+
+    const restore = createWeapon(0x51aa);
+    const cold = restore.weapon.snapshotState();
+    fireShots(restore, 3);
+    expect(restore.weapon.getActiveTracerCount()).toBeGreaterThan(0);
+    restore.weapon.restoreState(cold);
+    expect(restore.weapon.getActiveTracerCount()).toBe(0);
+    expect(restore.weapon.viewModel.getHeat()).toBe(0);
+    expect(restore.weapon.viewModel.getRecoilOffset()).toEqual({ pitch: 0, yaw: 0, roll: 0 });
+    restore.weapon.dispose();
+  });
+});
+
 describe('viewmodel shell ejection', () => {
   it('throws brass on every shot and recycles the pool', () => {
     const viewmodel = createViewModel();
@@ -418,6 +478,27 @@ describe('tracers', () => {
     expect(test.weapon.getActiveTracerCount()).toBeGreaterThan(0);
     test.weapon.dispose();
     expect(test.weapon.getActiveTracerCount()).toBe(0);
+  });
+
+  it('reuses a fixed tracer pool across repeated bursts', () => {
+    const test = createWeapon(79);
+    test.weapon.setSessionInput(inputFrame());
+    test.weapon.update(1 / 60, test.scene, []);
+    const pooled = test.scene.children.filter((child) => child.name.startsWith('TracerPool:'));
+    expect(pooled).toHaveLength(12);
+
+    for (let burst = 0; burst < 3; burst += 1) {
+      fireShots(test, (burst + 1) * 8);
+      test.weapon.setSessionInput(inputFrame());
+      for (let frame = 0; frame < 40; frame += 1) {
+        test.weapon.update(1 / 60, test.scene, []);
+      }
+    }
+
+    expect(test.scene.children.filter((child) => child.name.startsWith('TracerPool:'))).toEqual(pooled);
+    expect(test.weapon.getActiveTracerCount()).toBe(0);
+    test.weapon.dispose();
+    expect(test.scene.children.filter((child) => child.name.startsWith('TracerPool:'))).toHaveLength(0);
   });
 });
 

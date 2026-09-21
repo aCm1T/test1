@@ -38,6 +38,6 @@ console.log(`visual inspection template prepared for capture set ${digest}`);
 console.log(`inspect every image at native resolution, then complete ${OUTPUT}`);
 
 function fail(message) {
-  console.error(`visual inspection preparation: BLOCKED — ${message}`);
+  fs.writeSync(process.stderr.fd, `visual inspection preparation: BLOCKED — ${message}\n`);
   process.exit(1);
 }

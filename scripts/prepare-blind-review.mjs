@@ -276,6 +276,6 @@ function unsigned(value) {
 }
 
 function fail(message) {
-  console.error(`blind review preparation: BLOCKED — ${message}`);
+  fs.writeSync(process.stderr.fd, `blind review preparation: BLOCKED — ${message}\n`);
   process.exit(1);
 }

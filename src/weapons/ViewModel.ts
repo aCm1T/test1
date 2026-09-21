@@ -562,12 +562,12 @@ export class ViewModel {
   // its lens while its rim, not a luminous rectangle, owns the silhouette.
   private readonly opticGlass = mat(0x203943, {
     metalness: 0.08,
-    roughness: 0.08,
+    roughness: 0.04,
     emissive: 0x061319,
-    emissiveIntensity: 0.06,
+    emissiveIntensity: 0.025,
     finish: 'paint',
     transparent: true,
-    opacity: 0.32,
+    opacity: 0.11,
     depthWrite: false,
   });
   private readonly reticleGlow = mat(0xf06b45, {
@@ -947,6 +947,51 @@ export class ViewModel {
     this.playAuthoredPose('hip');
   }
 
+  /**
+   * Snap every viewmodel impulse to rest. Pause freezes these springs, so
+   * rematch and session restore would otherwise spawn with leftover recoil
+   * kick, ADS blend, muzzle flash, or brass from the previous timeline.
+   * `switchWeapon` no-ops when the same gun is already out, which is the
+   * rematch path after a spent AR burst.
+   */
+  resetPresentation(ads = false): void {
+    this.reloading = false;
+    this.emptyReload = false;
+    this.reloadT = 0;
+    this.heat = 0;
+    this.idleT = 0;
+    this.moveSpeed = 0;
+    this.moveStrafe = 0;
+    this.moveAirborne = false;
+    this.flashTimer = 0;
+    this.muzzleFlash.visible = false;
+    this.muzzleLight.visible = false;
+    this.muzzleLight.intensity = 0;
+    this.clearRecoilSprings();
+    this.clearCasings();
+    this.switchT = 1;
+    this.poseTransitionT = 1;
+    this.adsBlend = ads ? 1 : 0;
+    for (const id of Object.keys(this.weapons) as WeaponId[]) {
+      this.weapons[id].visible = id === this.active;
+    }
+    this.resetMagazine(this.active);
+    const slide = this.weapons.pistol.getObjectByName('slide');
+    if (slide) {
+      slide.userData.kickZ = 0;
+      const baseZ = (slide.userData.baseZ as number | undefined) ?? slide.position.z;
+      slide.position.z = baseZ;
+    }
+    const pose: ViewPose = ads ? 'ads' : 'hip';
+    const weapon = this.weapons[this.active];
+    const rest = POSES[this.active][pose];
+    weapon.position.set(...rest.pos);
+    weapon.rotation.set(...rest.rot);
+    this.pose = pose;
+    this.targetPose = pose;
+    this.playAuthoredPose(pose);
+  }
+
   installAuthored(gltf: GLTF): void {
     if (!hasSkinnedMesh(gltf.scene)) {
       throw new Error('authored viewmodel must contain a rigged SkinnedMesh');
@@ -1227,6 +1272,14 @@ export class ViewModel {
       this.targetPose === 'ads' ? 17 : 13,
       clampedDt,
     );
+    const fallbackReticle = this.weapons.ar.getObjectByName('FallbackOpticReticle');
+    if (fallbackReticle) {
+      // Real reflex dots disappear outside their eye box. Fade the fallback by
+      // sight alignment so hip fire never shows a floating red UI element.
+      fallbackReticle.visible = this.adsBlend > 0.16;
+      const eyeBox = MathUtils.smoothstep(this.adsBlend, 0.16, 0.72);
+      fallbackReticle.scale.setScalar(0.72 + eyeBox * 0.28);
+    }
     this.heat = MathUtils.damp(this.heat, 0, 1.7, clampedDt);
     this.integrateRecoilSprings(clampedDt);
     this.triggerPulse = MathUtils.damp(this.triggerPulse, 0, 36, clampedDt);
@@ -1989,7 +2042,16 @@ export class ViewModel {
       optic.add(this.roundedMesh(this.opticHousing, sx, y + 0.022, z, 0.013, 0.026, 0.04, 0.003));
       optic.add(this.disc(this.steelBright, 0.0045, 0.008, sx, y - 0.002, z + 0.012, 10));
     }
-    optic.add(this.cyl(this.opticHousing, 0.028, 0.029, 0.082, 0, y + 0.044, z, 18));
+    // Open-ended tube: a capped CylinderGeometry turns the sight into a black
+    // disk in ADS even when both lenses are transparent.
+    const opticTube = new Mesh(
+      new CylinderGeometry(0.028, 0.029, 0.082, 24, 1, true),
+      this.opticHousing,
+    );
+    opticTube.name = 'FallbackOpticOpenTube';
+    opticTube.rotation.x = Math.PI / 2;
+    opticTube.position.set(0, y + 0.044, z);
+    optic.add(opticTube);
     for (const tz of [z + 0.028, z - 0.028]) {
       const ring = new Mesh(new TorusGeometry(0.025, 0.0018, 8, 18), this.nitrideWorn);
       ring.position.set(0, y + 0.044, tz);
@@ -2022,11 +2084,11 @@ export class ViewModel {
     const reticle = new Group();
     reticle.name = 'FallbackOpticReticle';
     reticle.position.set(0, y + 0.044, z + 0.047);
-    const reticleRing = new Mesh(new TorusGeometry(0.0048, 0.0008, 6, 12), this.reticleGlow);
-    reticleRing.renderOrder = 3;
-    reticle.add(reticleRing);
-    const reticleDot = new Mesh(new SphereGeometry(0.0018, 10, 10), this.reticleGlow);
-    reticleDot.renderOrder = 3;
+    // A reflex optic projects one clean point at infinity. The former ring plus
+    // HUD cross read like a debug target; a small luminous dot leaves the world
+    // visible and lets recoil move the sight picture naturally.
+    const reticleDot = new Mesh(new SphereGeometry(0.00145, 12, 12), this.reticleGlow);
+    reticleDot.renderOrder = 4;
     reticle.add(reticleDot);
     optic.add(reticle);
     parent.add(optic);

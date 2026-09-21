@@ -1,9 +1,16 @@
 # Asset provenance
 
-## Development fallback material
+## Standalone procedural profile material
 
-- `dev-wet-asphalt-v1.png` — original development-only wet-asphalt material generated for this project on 2026-08-01. It is retained as a development source and is not evidence of, or a substitute for, the licensed authored production asset package.
+These files are approved for the standalone browser release. They remain
+development fallbacks relative to the separate strict authored-asset profile
+and do not satisfy that profile's handoff contract.
+
+- `dev-wet-asphalt-v1.png` — original wet-asphalt material generated for this project on 2026-08-01. It is distributable in the standalone profile and is not evidence of, or a substitute for, the strict authored production asset package.
 - `development/original-materials/nightglass-charcoal-ripstop-v1.png` — original development-only charcoal ripstop fabric material generated with OpenAI built-in image generation for this repository on 2026-08-05. It contains no third-party source artwork, branding, or franchise imagery. It may be applied only to procedural fallback tactical fabric, remains outside `manifest.json` and the authored asset contract, and must never be represented as the supplied production material package.
+- `development/original-materials/nightglass-urban-ripstop-v2.png` — original development-only urban tactical ripstop albedo generated with OpenAI built-in image generation for this repository on 2026-09-20. It uses a restrained charcoal, graphite, muted-olive and cool-slate palette with a fine woven grid. It contains no third-party source artwork, branding, insignia, or franchise imagery. Runtime use is limited to procedural fallback character and first-person soft goods; it remains outside `manifest.json` and cannot satisfy the authored production asset contract.
+  - Final prompt summary: Seamless square, top-down modern urban tactical ripstop fabric albedo; subtle charcoal/olive micro-camouflage, neutral diffuse capture, no baked light or shadow, folds, seams, pockets, text, logos, symbols, or watermark.
+  - Modifications: Resampled to a power-of-two 1024×1024 RGB PNG and stripped of metadata for WebGL repeat sampling.
 
 ## Development fallback HDRI
 

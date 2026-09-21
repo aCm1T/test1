@@ -4,6 +4,7 @@ export {
   CROSSHAIR_SPREAD_RAD_TO_PX,
   INTERACT_PROMPT_KEYS,
   formatInteractPrompt,
+  formatMissionTime,
   resolveMissionInteractPrompt,
   resolveDeathRestoreSubtitle,
   type HUDAmmoState,
@@ -13,6 +14,7 @@ export {
   type HUDObjectiveStatus,
   type HUDMissionResult,
   type HUDMissionResultKind,
+  type HUDCallbacks,
 } from './HUD';
 
 export {

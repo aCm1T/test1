@@ -313,6 +313,14 @@ export class PostProcessing {
     // retaining this pass there restores the intended small-scale grounding
     // without enabling it on the low profile.
     this.ssaoPass.enabled = profile.ambientOcclusion;
+    // SSAO is the heaviest fullscreen stage. Running it below scene resolution
+    // retains broad contact grounding via depth-aware upsampling while removing
+    // a large fragment-work spike on the common Medium/High AUTO tiers.
+    this.ssao.resolution.scale = profile.tier === 'ultra'
+      ? 0.8
+      : profile.tier === 'high'
+        ? 0.65
+        : 0.5;
     this.gradingPass.enabled = true;
     this.smaa.blendMode.opacity.value = profile.tier === 'low' ? 0.55 : 1;
     this.duskGrade.setStrength(profile.tier === 'low' ? 0.6 : 1);
@@ -364,15 +372,18 @@ export class PostProcessing {
 
   private applyDamageLook(): void {
     const d = this.damageIntensity;
-    this.vignette.darkness = this.baseVignette + d * 0.55;
-    this.vignette.offset = 0.35 - d * 0.12;
+    // Keep the centre readable while hurt. The HTML edge flash supplies the
+    // immediate hit cue; this layer should communicate low health without
+    // washing the entire world red or tunnelling the player's vision.
+    this.vignette.darkness = this.baseVignette + d * 0.34;
+    this.vignette.offset = 0.35 - d * 0.07;
 
-    const c = this.baseChromatic + d * 0.0045;
+    const c = this.baseChromatic + d * 0.0026;
     this.chromatic.offset.set(c, c * 0.65);
 
     this.noise.blendMode.opacity.value = this.deterministicCapture
       ? 0
-      : this.qualityNoiseOpacity + d * 0.08;
+      : this.qualityNoiseOpacity + d * 0.045;
   }
 }
 

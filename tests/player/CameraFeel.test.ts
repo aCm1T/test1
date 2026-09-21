@@ -1,4 +1,6 @@
 import { PerspectiveCamera } from 'three';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CameraFeel } from '../../src/player';
 import type { PlayerController } from '../../src/player';
@@ -129,6 +131,56 @@ describe('CameraFeel traversal feedback', () => {
     step(outside.feel, 3);
     expect(outside.feel.getViewPunch().pitch).toBe(0);
   });
+
+  it('resetView snaps punch, slide blend and FOV so a paused rewind cannot keep them', () => {
+    const { feel, camera, player } = createFeel();
+    feel.addViewPunch(0.04, 0.02, 0.01);
+    player.slideSpeed = 10.2;
+    player.sliding = true;
+    step(feel, 8, { moving: true, ads: true, sliding: true });
+
+    expect(feel.getViewPunch().pitch).not.toBe(0);
+    expect(feel.getSlideBlend()).toBeGreaterThan(0.3);
+    expect(camera.fov).toBeLessThan(feel.hipFov);
+
+    feel.resetView(false);
+    expect(feel.getViewPunch()).toEqual({ pitch: 0, yaw: 0, roll: 0 });
+    expect(feel.getSlideBlend()).toBe(0);
+    expect(camera.fov).toBe(feel.hipFov);
+    expect(camera.position.y).toBeCloseTo(EYE, 5);
+    expect(camera.rotation.x).toBeCloseTo(BASE_PITCH, 5);
+    expect(camera.rotation.y).toBe(0);
+    expect(camera.rotation.z).toBe(0);
+
+    feel.resetView(true);
+    expect(camera.fov).toBe(feel.adsFov);
+  });
+});
+
+describe('CameraFeel rewind wiring', () => {
+  it('snaps view impulses on death restore, rematch, session restore and QA reset', () => {
+    const src = readFileSync(path.join(process.cwd(), 'src/main.ts'), 'utf8');
+    const death = src.slice(
+      src.indexOf('private updateDeathRestore'),
+      src.indexOf('private restoreSimulationClock'),
+    );
+    const rematch = src.slice(
+      src.indexOf('private resetRunToOpening'),
+      src.indexOf('private syncAmmoHud'),
+    );
+    const session = src.slice(
+      src.indexOf('private restoreSessionWorld'),
+      src.indexOf('private handleSessionEvent'),
+    );
+    const qa = src.slice(
+      src.indexOf('private qaResetPresentation'),
+      src.indexOf('private qaSetCaptureState'),
+    );
+    expect(death).toContain('this.cameraFeel.resetView(this.weapons.isADS())');
+    expect(rematch).toContain('this.cameraFeel.resetView(false)');
+    expect(session).toContain('this.cameraFeel.resetView(this.weapons.isADS())');
+    expect(qa).toContain('this.cameraFeel.resetView(this.weapons.isADS())');
+  });
 });
 
 interface StubPlayer {
@@ -173,8 +225,19 @@ function createFeel(): {
   return { feel: new CameraFeel(camera, player), camera, player: state };
 }
 
-function step(feel: CameraFeel, frames: number): void {
+function step(
+  feel: CameraFeel,
+  frames: number,
+  options: { moving?: boolean; sprinting?: boolean; ads?: boolean; sliding?: boolean } = {},
+): void {
   for (let i = 0; i < frames; i++) {
-    feel.update(1 / 60, false, false, false, true);
+    feel.update(
+      1 / 60,
+      options.moving ?? false,
+      options.sprinting ?? false,
+      options.ads ?? false,
+      true,
+      options.sliding,
+    );
   }
 }

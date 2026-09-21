@@ -171,6 +171,12 @@ export class EnemyManager {
   private readonly fireSlots = new Map<Enemy, number>();
   /** Scratch list for the per-frame draw-detail budget; never simulation state. */
   private readonly detailOrder: Array<{ enemy: Enemy; distance: number }> = [];
+  /** Stable entries avoid allocating one sort wrapper per hostile per fixed tick. */
+  private readonly detailEntries = new Map<Enemy, { enemy: Enemy; distance: number }>();
+  /** Hitscan adapters are stable for an enemy's lifetime; only the alive list is refreshed. */
+  private readonly hitscanAdapters = new Map<Enemy, HitscanEnemy>();
+  private readonly aliveHitscanTargets: HitscanEnemy[] = [];
+  private readonly aliveScratch: Enemy[] = [];
   /** Quality LOD bias applied to every hostile's presentation distances. */
   private lodBias = 0;
   private readonly lastPlayerPosition = new THREE.Vector3();
@@ -267,6 +273,15 @@ export class EnemyManager {
     return this.enemies.filter((enemy) => enemy.alive);
   }
 
+  /** Allocation-free alive count for frame/fixed-tick hot paths. */
+  getAliveCount(): number {
+    let count = 0;
+    for (const enemy of this.enemies) {
+      if (enemy.alive) count += 1;
+    }
+    return count;
+  }
+
   getAll(): Enemy[] {
     return this.enemies;
   }
@@ -353,12 +368,15 @@ export class EnemyManager {
     this.detailOrder.length = 0;
     for (const enemy of this.enemies) {
       if (!enemy.alive) continue;
-      this.detailOrder.push({
-        enemy,
-        distance: enemy.mesh.position.distanceToSquared(playerPos),
-      });
+      let entry = this.detailEntries.get(enemy);
+      if (!entry) {
+        entry = { enemy, distance: 0 };
+        this.detailEntries.set(enemy, entry);
+      }
+      entry.distance = enemy.mesh.position.distanceToSquared(playerPos);
+      this.detailOrder.push(entry);
     }
-    this.detailOrder.sort((a, b) => a.distance - b.distance);
+    this.detailOrder.sort(compareEnemyDetailDistance);
 
     let budget = MAX_DETAILED_HOSTILES;
     for (const entry of this.detailOrder) {
@@ -513,23 +531,31 @@ export class EnemyManager {
    * grenade splash and firearm hits share EnemyManager death accounting.
    */
   asHitscanTargets(): HitscanEnemy[] {
-    return this.getAlive().map((enemy) => {
-      const base = asHitscanEnemy(enemy);
-      return {
-        get alive() {
-          return enemy.alive;
-        },
-        getHitboxes: () => base.getHitboxes(),
-        takeDamage: (amount: number, bodyPart?: BodyPart) => {
-          const result = this.applyScaledDamage(
-            enemy,
-            amount,
-            hitscanBodyPartToHitPart(bodyPart),
-          );
-          return Boolean(result?.killed);
-        },
-      };
-    });
+    this.aliveHitscanTargets.length = 0;
+    for (const enemy of this.enemies) {
+      if (!enemy.alive) continue;
+      let target = this.hitscanAdapters.get(enemy);
+      if (!target) {
+        const base = asHitscanEnemy(enemy);
+        target = {
+          get alive() {
+            return enemy.alive;
+          },
+          getHitboxes: () => base.getHitboxes(),
+          takeDamage: (amount: number, bodyPart?: BodyPart) => {
+            const result = this.applyScaledDamage(
+              enemy,
+              amount,
+              hitscanBodyPartToHitPart(bodyPart),
+            );
+            return Boolean(result?.killed);
+          },
+        };
+        this.hitscanAdapters.set(enemy, target);
+      }
+      this.aliveHitscanTargets.push(target);
+    }
+    return this.aliveHitscanTargets;
   }
 
   raycast(
@@ -589,6 +615,7 @@ export class EnemyManager {
       );
     }
     this.enemies.push(enemy);
+    this.detailEntries.set(enemy, { enemy, distance: 0 });
     this.assignSquadTactics();
     return enemy;
   }
@@ -601,6 +628,8 @@ export class EnemyManager {
       const enemy = this.enemies[i];
       if (!enemy.alive) {
         this.fireSlots.delete(enemy);
+        this.detailEntries.delete(enemy);
+        this.hitscanAdapters.delete(enemy);
         enemy.dispose();
         this.enemies.splice(i, 1);
         remaining--;
@@ -689,6 +718,10 @@ export class EnemyManager {
     }
     this.enemies.length = 0;
     this.fireSlots.clear();
+    this.detailEntries.clear();
+    this.hitscanAdapters.clear();
+    this.aliveHitscanTargets.length = 0;
+    this.aliveScratch.length = 0;
     this.elapsed = Math.max(0, snapshot.elapsed);
     this.waveTimer = Math.max(0, snapshot.waveTimer);
     this.waitingWave = snapshot.waitingWave;
@@ -761,6 +794,10 @@ export class EnemyManager {
     }
     this.enemies.length = 0;
     this.fireSlots.clear();
+    this.detailEntries.clear();
+    this.hitscanAdapters.clear();
+    this.aliveHitscanTargets.length = 0;
+    this.aliveScratch.length = 0;
     this.elapsed = 0;
     this.waveTimer = 0;
     this.waitingWave = false;
@@ -798,23 +835,31 @@ export class EnemyManager {
     }
     this.enemies.length = 0;
     this.fireSlots.clear();
+    this.detailEntries.clear();
+    this.hitscanAdapters.clear();
+    this.aliveHitscanTargets.length = 0;
+    this.aliveScratch.length = 0;
     this.group.removeFromParent();
   }
 
   private spawnInitial(): void {
+    // The opening contact starts beyond the player's immediate spawn pocket.
+    // Both silhouettes remain visible down the route, but the player has time
+    // to read the street and reach the first cover line before the crossfire.
     const opening = [
-      new THREE.Vector3(-3.5, 0, 9),
-      new THREE.Vector3(4, 0, 11),
+      new THREE.Vector3(-6.5, 0, 15),
+      new THREE.Vector3(7, 0, 17),
     ];
     for (const position of opening) {
       if (this.enemies.length >= this.maxAlive) break;
       this.spawnAt(position);
     }
 
-    const target = Math.min(
-      this.maxAlive,
-      Math.max(4, Math.floor(this.level.enemySpawns.length * 0.6)),
-    );
+    // MissionDirector's insertion directive is authored for four simultaneous
+    // hostiles. Starting from the whole route's spawn count used to create as
+    // many as eight before that directive could run; directives pace later
+    // reinforcements but deliberately do not despawn an existing roster.
+    const target = Math.min(this.maxAlive, 4);
     const candidates = this.rankSpawnCandidates(this.level.enemySpawns, opening);
     for (const position of candidates) {
       if (this.enemies.length >= target) break;
@@ -863,7 +908,11 @@ export class EnemyManager {
    */
   private updateSquadCoordination(step: number): void {
     if (this.restoring) return;
-    const alive = this.getAlive();
+    const alive = this.aliveScratch;
+    alive.length = 0;
+    for (const enemy of this.enemies) {
+      if (enemy.alive) alive.push(enemy);
+    }
     if (alive.length === 0) {
       this.hasSharedContact = false;
       this.contactAge = 0;
@@ -871,7 +920,13 @@ export class EnemyManager {
       return;
     }
 
-    const spotter = alive.find((enemy) => enemy.hasVisualContact()) ?? null;
+    let spotter: Enemy | null = null;
+    for (const enemy of alive) {
+      if (enemy.hasVisualContact()) {
+        spotter = enemy;
+        break;
+      }
+    }
     if (spotter) {
       this.sharedContact.copy(this.lastPlayerPosition);
       this.hasSharedContact = true;
@@ -990,7 +1045,7 @@ export class EnemyManager {
   private spawnWave(): number {
     this.pruneDead(8);
     const target = Math.min(this.maxAlive, this.aliveTarget);
-    const room = Math.max(0, target - this.getAlive().length);
+    const room = Math.max(0, target - this.getAliveCount());
     // waveIndex only advances on a real spawn so blocked attempts do not
     // inflate the next successful wave size.
     const count = Math.min(this.waveSize + Math.floor(this.waveIndex * 0.5), room);
@@ -1008,7 +1063,7 @@ export class EnemyManager {
     if (candidates.length === 0) return 0;
     let spawned = 0;
     for (let i = 0; i < count; i++) {
-      if (this.getAlive().length >= this.maxAlive) break;
+      if (this.getAliveCount() >= this.maxAlive) break;
       const source = candidates[i % candidates.length];
       const jitter = new THREE.Vector3(
         this.random.range(-0.75, 0.75),
@@ -1123,6 +1178,13 @@ export class EnemyManager {
     }
     return null;
   }
+}
+
+function compareEnemyDetailDistance(
+  a: { enemy: Enemy; distance: number },
+  b: { enemy: Enemy; distance: number },
+): number {
+  return a.distance - b.distance;
 }
 
 function shuffledCopy<T>(items: readonly T[], random: SeededRandom): T[] {

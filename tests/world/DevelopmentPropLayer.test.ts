@@ -88,7 +88,17 @@ describe('DevelopmentPropLayer', () => {
     const visualMeshes = meshesOf(placed as Group);
     expect(visualMeshes.length).toBeGreaterThan(0);
     expect(visualMeshes.filter((mesh) => mesh.castShadow)).toHaveLength(1);
-    expect(visualMeshes.every((mesh) => mesh.receiveShadow)).toBe(true);
+    const casters = visualMeshes.filter((mesh) => mesh.castShadow);
+    const colour = visualMeshes.filter((mesh) => !mesh.castShadow);
+    expect(colour.length).toBeGreaterThan(0);
+    expect(colour.every((mesh) => {
+      const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      return mesh.receiveShadow && material.colorWrite !== false;
+    })).toBe(true);
+    expect(casters.every((mesh) => {
+      const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      return !mesh.receiveShadow && material.colorWrite === false && material.depthWrite === false;
+    })).toBe(true);
 
     layer.dispose();
     expect(parent.children).toHaveLength(0);
@@ -120,7 +130,12 @@ describe('DevelopmentPropLayer', () => {
     expect(meshes.some((mesh) => mesh.castShadow)).toBe(true);
     expect(meshes.some((mesh) => !mesh.castShadow)).toBe(true);
     expect(meshes.filter((mesh) => mesh.castShadow)).toHaveLength(1);
-    expect(meshes.every((mesh) => mesh.receiveShadow)).toBe(true);
+    const casters = meshes.filter((mesh) => mesh.castShadow);
+    expect(meshes.filter((mesh) => !mesh.castShadow).every((mesh) => mesh.receiveShadow)).toBe(true);
+    expect(casters.every((mesh) => {
+      const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      return !mesh.receiveShadow && material.colorWrite === false && material.depthWrite === false;
+    })).toBe(true);
     layer.dispose();
   });
 

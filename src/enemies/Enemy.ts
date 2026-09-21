@@ -187,6 +187,8 @@ interface DevelopmentRipstopTextures {
   source: THREE.Texture;
   /** The single view the shared soft-goods surface samples. */
   view: THREE.Texture;
+  /** Tiled view used by the large fatigue panels. */
+  uniformView: THREE.Texture;
 }
 
 /**
@@ -202,6 +204,9 @@ let developmentRipstop: DevelopmentRipstopTextures | null = null;
  * carried before the two shared one batch.
  */
 const DEVELOPMENT_SOFT_GOODS_TINT = 0xc9d1c9;
+/** Keep the dark albedo readable under the dusk key without bleaching its olive variation. */
+const DEVELOPMENT_FATIGUE_TINT = 0xd8ded5;
+const DEVELOPMENT_TROUSER_TINT = 0xbac2bc;
 
 /**
  * Every fallback material and generated texture is created once per process.
@@ -232,6 +237,11 @@ interface EnemyFallbackKit {
   softGoods: SurfaceFamily;
   /** Generated soft-goods albedo, restored whenever that source is absent. */
   softGoodsAlbedo: THREE.Texture;
+  /** Generated fatigue state restored when the development source is absent. */
+  bodyAlbedo: THREE.Texture | null;
+  bodyColor: THREE.Color;
+  trouserAlbedo: THREE.Texture | null;
+  trouserColor: THREE.Color;
 }
 
 /**
@@ -296,7 +306,18 @@ function applyDevelopmentRipstopToKit(): void {
   const ripstop = developmentRipstop;
   kit.softGoods.setAlbedo(ripstop ? ripstop.view : kit.softGoodsAlbedo);
   kit.softGoods.setTint(ripstop ? DEVELOPMENT_SOFT_GOODS_TINT : 0xffffff);
+  kit.body.map = ripstop ? ripstop.uniformView : kit.bodyAlbedo;
+  kit.body.emissiveMap = ripstop ? ripstop.uniformView : null;
+  kit.body.color.copy(ripstop ? new THREE.Color(DEVELOPMENT_FATIGUE_TINT) : kit.bodyColor);
+  kit.body.needsUpdate = true;
+  kit.trouser.map = ripstop ? ripstop.uniformView : kit.trouserAlbedo;
+  kit.trouser.emissiveMap = ripstop ? ripstop.uniformView : null;
+  kit.trouser.color.copy(ripstop ? new THREE.Color(DEVELOPMENT_TROUSER_TINT) : kit.trouserColor);
+  kit.trouser.needsUpdate = true;
 }
+
+/** Existing soldiers own a fatigue clone, so late texture loads must retarget it too. */
+const liveFallbackEnemies = new Set<Enemy>();
 
 /**
  * Procedural low-poly soldier with simple combat AI:
@@ -460,6 +481,7 @@ export class Enemy {
     // Every other fallback material and texture is shared process-wide; only
     // the fatigue material is per-hostile because damage response mutates it.
     this.bodyMat = fallbackKit().body.clone();
+    liveFallbackEnemies.add(this);
 
     this.mesh = new THREE.Group();
     this.mesh.name = 'EnemySoldier';
@@ -496,6 +518,7 @@ export class Enemy {
   static installDevelopmentRipstop(source: THREE.Texture, maxAnisotropy = 8): void {
     if (developmentRipstop?.source === source) {
       applyDevelopmentRipstopToKit();
+      for (const enemy of liveFallbackEnemies) enemy.syncDevelopmentFatigue();
       return;
     }
     Enemy.clearDevelopmentRipstop();
@@ -512,8 +535,21 @@ export class Enemy {
     view.anisotropy = Math.max(1, Math.min(8, Math.floor(maxAnisotropy)));
     view.needsUpdate = true;
 
-    developmentRipstop = { source, view };
+    const uniformView = source.clone();
+    uniformView.name = 'DevelopmentFallbackEnemyFatigueRipstop';
+    uniformView.colorSpace = THREE.SRGBColorSpace;
+    uniformView.wrapS = THREE.RepeatWrapping;
+    uniformView.wrapT = THREE.RepeatWrapping;
+    uniformView.repeat.set(2.4, 2.4);
+    uniformView.magFilter = THREE.LinearFilter;
+    uniformView.minFilter = THREE.LinearMipmapLinearFilter;
+    uniformView.generateMipmaps = true;
+    uniformView.anisotropy = Math.max(1, Math.min(8, Math.floor(maxAnisotropy)));
+    uniformView.needsUpdate = true;
+
+    developmentRipstop = { source, view, uniformView };
     applyDevelopmentRipstopToKit();
+    for (const enemy of liveFallbackEnemies) enemy.syncDevelopmentFatigue();
   }
 
   /** Releases shared fallback clones without disposing the bootstrap-owned source. */
@@ -521,7 +557,19 @@ export class Enemy {
     const current = developmentRipstop;
     developmentRipstop = null;
     applyDevelopmentRipstopToKit();
+    for (const enemy of liveFallbackEnemies) enemy.syncDevelopmentFatigue();
     current?.view.dispose();
+    current?.uniformView.dispose();
+  }
+
+  private syncDevelopmentFatigue(): void {
+    const kit = fallbackKit();
+    this.bodyMat.map = developmentRipstop?.uniformView ?? kit.bodyAlbedo;
+    this.bodyMat.emissiveMap = developmentRipstop?.uniformView ?? null;
+    this.bodyMat.color.copy(
+      developmentRipstop ? new THREE.Color(DEVELOPMENT_FATIGUE_TINT) : kit.bodyColor,
+    );
+    this.bodyMat.needsUpdate = true;
   }
 
   get position(): THREE.Vector3 {
@@ -920,6 +968,7 @@ export class Enemy {
   }
 
   dispose(): void {
+    liveFallbackEnemies.delete(this);
     this.removeAuthoredVisual();
     // Fallback geometry, textures, and every other material are shared by all
     // hostiles, so only the per-hostile fatigue material is released here.
@@ -2313,6 +2362,13 @@ function createFallbackKit(): EnemyFallbackKit {
   bindSharedSurface(webbingMat, FALLBACK_SURFACES.webbing, softGoods, textures);
   bindSharedSurface(gloveMat, FALLBACK_SURFACES.glove, softGoods, textures);
 
+  // Capture the generated fatigue state after surface correction so the
+  // optional development albedo can be removed without rebuilding the kit.
+  const bodyAlbedo = bodyMat.map;
+  const bodyColor = bodyMat.color.clone();
+  const trouserAlbedo = trouserMat.map;
+  const trouserColor = trouserMat.color.clone();
+
   // A compact contact shadow anchors the character without reading as a large
   // black disc when the sun is low.
   const shadowMat = new THREE.MeshBasicMaterial({
@@ -2340,6 +2396,10 @@ function createFallbackKit(): EnemyFallbackKit {
     families: [hardGoods.family, softGoods.family],
     softGoods: softGoods.family,
     softGoodsAlbedo: softGoods.albedo,
+    bodyAlbedo,
+    bodyColor,
+    trouserAlbedo,
+    trouserColor,
   };
 }
 

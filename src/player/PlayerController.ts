@@ -4,6 +4,7 @@ import {
   PerspectiveCamera,
   Vector3,
 } from 'three';
+import { requestPointerLockSafely } from './PointerLock';
 import type { InputFrame, PhysicsWorld } from '../simulation';
 
 /** Axis-aligned world collider used for FPS ground/wall collision. */
@@ -194,7 +195,7 @@ export class PlayerController {
 
     const onClick = () => {
       if (!this.pointerLocked && this.alive) {
-        dom.requestPointerLock?.();
+        requestPointerLockSafely(dom);
       }
     };
 
@@ -211,7 +212,7 @@ export class PlayerController {
   requestPointerLock(element?: HTMLElement): void {
     const el = element ?? this.attachElement ?? document.body;
     if (!this.pointerLocked) {
-      el.requestPointerLock?.();
+      requestPointerLockSafely(el);
     }
   }
 

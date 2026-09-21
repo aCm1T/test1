@@ -32,6 +32,8 @@ export class AudioManager {
   private acousticSpace: 'indoor' | 'outdoor' = 'outdoor';
   private disposeGesture: (() => void) | null = null;
   private readonly suppliedBuffers = new Map<string, AudioBuffer>();
+  /** Reused by every procedural one-shot; AudioBufferSourceNodes remain disposable. */
+  private readonly proceduralNoiseBuffers = new Map<string, AudioBuffer>();
 
   private masterVol: number;
   private sfxVol: number;
@@ -418,7 +420,9 @@ export class AudioManager {
     const proximity = Math.max(0.12, 1 - Math.min(1, distance / Math.max(1, radius * 2.2)));
     if (this.playSupplied(['explosion', 'grenade-explode'], dest, proximity * 1.2)) return;
 
-    const duration = 0.9 + proximity * 0.5;
+    // Quantise the fallback tail so repeated rematches reuse at most eleven
+    // cached buffers instead of retaining one unique AudioBuffer per distance.
+    const duration = Math.round((0.9 + proximity * 0.5) * 20) / 20;
     const src = ctx.createBufferSource();
     src.buffer = this.createNoiseBuffer(duration, 'brown');
     const low = ctx.createBiquadFilter();
@@ -707,6 +711,7 @@ export class AudioManager {
     this.ambientGain = null;
     this.uiGain = null;
     this.suppliedBuffers.clear();
+    this.proceduralNoiseBuffers.clear();
     this.unlocked = false;
   }
 
@@ -742,6 +747,13 @@ export class AudioManager {
     this.uiGain.gain.value = this.uiVol;
     this.uiGain.connect(this.masterGain);
 
+    // Generate the common fallback palette during the launch gesture. Building
+    // a fresh 0.85 s brown-noise tail for every AR round was a multi-megabyte-
+    // per-second allocation stream during automatic fire.
+    for (const [duration, type] of PROCEDURAL_NOISE_PREWARM) {
+      this.createNoiseBuffer(duration, type);
+    }
+
     return this.ctx;
   }
 
@@ -764,21 +776,32 @@ export class AudioManager {
     const ctx = this.ctx!;
     const sampleRate = ctx.sampleRate;
     const length = Math.max(1, Math.floor(sampleRate * duration));
+    const cacheKey = `${type}:${length}`;
+    const cached = this.proceduralNoiseBuffers.get(cacheKey);
+    if (cached) return cached;
     const buffer = ctx.createBuffer(1, length, sampleRate);
     const data = buffer.getChannelData(0);
 
+    // A local deterministic stream keeps buffer prewarming from consuming the
+    // gameplay presentation RNG. Pitch, filters and envelopes still vary each
+    // playback, while the expensive sample array is shared safely.
+    let noiseState = noiseSeed(type, length);
+
     if (type === 'white') {
       for (let i = 0; i < length; i++) {
-        data[i] = this.random() * 2 - 1;
+        noiseState = nextNoiseState(noiseState);
+        data[i] = noiseState / 0x1_0000_0000 * 2 - 1;
       }
     } else {
       let last = 0;
       for (let i = 0; i < length; i++) {
-        const white = this.random() * 2 - 1;
+        noiseState = nextNoiseState(noiseState);
+        const white = noiseState / 0x1_0000_0000 * 2 - 1;
         last = (last + 0.02 * white) / 1.02;
         data[i] = last * 3.5;
       }
     }
+    this.proceduralNoiseBuffers.set(cacheKey, buffer);
     return buffer;
   }
 
@@ -800,10 +823,18 @@ export class AudioManager {
     destination: AudioNode,
     gainValue: number,
   ): number {
-    const buffers = new Set(ids
-      .map((id) => this.suppliedBuffers.get(id.toLowerCase()))
-      .filter((candidate): candidate is AudioBuffer => candidate !== undefined));
-    for (const buffer of buffers) {
+    let played = 0;
+    for (let index = 0; index < ids.length; index += 1) {
+      const buffer = this.suppliedBuffers.get(ids[index].toLowerCase());
+      if (!buffer) continue;
+      let duplicate = false;
+      for (let prior = 0; prior < index; prior += 1) {
+        if (this.suppliedBuffers.get(ids[prior].toLowerCase()) === buffer) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (duplicate) continue;
       const source = this.ctx!.createBufferSource();
       const gain = this.ctx!.createGain();
       source.buffer = buffer;
@@ -811,14 +842,17 @@ export class AudioManager {
       source.connect(gain);
       gain.connect(destination);
       source.start();
+      played += 1;
     }
-    return buffers.size;
+    return played;
   }
 
   private findSupplied(ids: readonly string[]): AudioBuffer | undefined {
-    return ids
-      .map((id) => this.suppliedBuffers.get(id.toLowerCase()))
-      .find((candidate): candidate is AudioBuffer => candidate !== undefined);
+    for (const id of ids) {
+      const buffer = this.suppliedBuffers.get(id.toLowerCase());
+      if (buffer) return buffer;
+    }
+    return undefined;
   }
 
   /** Indoor spaces duck the outdoor wind bed so gunfire/footsteps own the mix. */
@@ -838,4 +872,25 @@ export class AudioManager {
     this.windNodes.gain.gain.cancelScheduledValues(t);
     this.windNodes.gain.gain.setTargetAtTime(indoor ? 0.05 : 0.22, t, 0.1);
   }
+}
+
+const PROCEDURAL_NOISE_PREWARM: readonly (readonly [number, NoiseType])[] = [
+  [0.09, 'white'],
+  [0.12, 'white'],
+  [0.34, 'brown'],
+  [0.85, 'brown'],
+  [0.55, 'white'],
+  [0.06, 'white'],
+  [0.08, 'white'],
+  [0.06, 'brown'],
+  [0.08, 'brown'],
+  [2.5, 'brown'],
+];
+
+function noiseSeed(type: NoiseType, length: number): number {
+  return ((type === 'white' ? 0x57484954 : 0x42524f57) ^ length) >>> 0;
+}
+
+function nextNoiseState(state: number): number {
+  return (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
 }

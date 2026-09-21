@@ -1,79 +1,81 @@
 # FRONTLINE: NIGHTGLASS
 
-Browser-based grounded-modern dusk FPS vertical slice built with **Three.js**, TypeScript, and Vite.
+An original single-player browser FPS built with Three.js, TypeScript, Vite and Rapier. The five-stage mission covers insertion, an intersection assault, jammer shutdown, a 90-second defense and extraction.
 
-The playable mission moves from first contact through an intersection assault, jammer shutdown, timed defense, and extraction. It includes deterministic fixed-step simulation, seeded perception-aware AI, pointer-lock gunplay, AR/pistol/knife combat, frag grenades, mantle/slide movement, checkpoint recovery, VFX, HUD, adaptive quality infrastructure, and cinematic post-processing. Pointer deltas, held controls, and one-shot actions are sampled into replayable fixed-tick `InputFrame`s; no weapon, grenade, or mission interaction mutates combat state directly from a DOM event.
+The standalone release includes fixed-step simulation, perception-aware enemies, AR/pistol/knife combat, frag grenades, mantle and slide movement, death recovery, session checkpoints, deterministic supplies, mission statistics, adaptive quality, local procedural audio, and a complete menu/replay loop. It is designed for desktop keyboard and mouse; mobile and multiplayer are outside this release.
 
-The project is an original browser vertical slice, not a Call of Duty product. Current character, environment, and weapon geometry remains procedural and therefore below commercial AAA asset fidelity; it is an explicit development fallback only. The authored route loader, Meshopt/Draco/KTX2 pipeline, Rapier query adapter, `GameSession`, navigation graph, cover reservations, and deterministic checkpoint state are ready for the supplied asset package.
+## Play locally
 
-## Authored asset handoff and release gate
-
-Place the licensed source package in `assets/source/{environment,viewmodel,characters,audio,references}` and record each distribution asset's source and license in `public/assets/manifest.json`. Hero GLBs must use real Meshopt bufferView payloads and node-level GPU instancing for named lamp/window/debris sets. Hero normal/ORM textures must use KTX2/UASTC; albedo/emissive and three UV1 architecture lightmaps must use KTX2/ETC1S. Rigged clips and the viewmodel `ADS_RETICLE` marker are inspected from the GLBs. Legal references must include FOV, resolution, scenario and crop metadata, and their real pixel dimensions are checked. The runtime route uses the authored modules when the contract passes and otherwise keeps the detectable procedural fallback.
+Requirements: a current desktop Chromium/Chrome, Firefox or Safari browser with WebGL2, hardware acceleration, keyboard and mouse. Headphones are recommended.
 
 ```bash
-npm run qa:assets
-```
-
-This command is expected to fail until all five source groups and 12 legally obtained matched reference captures are supplied. Do not publish while it fails; see [the release review](docs/RELEASE-REVIEW.md).
-
-## Run
-
-```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Open the local URL, click **PLAY**, then click the canvas for pointer lock.
+Open the shown URL and click **PLAY**. If the browser denies mouse capture, click the game again. Escape, focus loss and pointer-lock loss pause the mission without leaking menu input into combat.
 
 ## Controls
 
 | Input | Action |
-|-------|--------|
+|---|---|
 | WASD | Move |
 | Shift | Sprint |
-| Ctrl / C | Crouch |
-| Space | Jump |
-| Space at low ledge | Mantle |
-| Ctrl / C while sprinting | Slide |
+| Ctrl / C | Crouch or slide while sprinting |
+| Space | Jump or mantle a low ledge |
 | Mouse | Look |
 | LMB | Fire |
-| RMB | ADS |
+| RMB | Aim down sights; hold or toggle in Settings |
 | R | Reload |
 | G | Frag grenade |
-| E / F | Interact / disable jammer |
-| 1 / 2 / 3 | AR / Pistol / Knife |
-| Scroll | Cycle weapons |
-| Esc | Release pointer / pause menu |
+| E / F | Interact or disable jammer |
+| 1 / 2 / 3 | AR / pistol / knife |
+| Mouse wheel | Cycle weapons |
+| Escape | Pause and release the mouse |
 
-## Stack
+Settings persist in local browser storage. Checkpoints and run statistics last for the current session.
 
-- `three` — WebGL renderer, PBR materials, shadows
-- `postprocessing` — bloom, damage-only chromatic response, SSAO, SMAA, film grain
-- `@dimforge/rapier3d-compat` — capsule movement, shared hitscan/LOS/surface/interaction queries, grenade bodies
-- Supplied layered audio when the asset contract passes, with deterministic
-  procedural Web Audio retained only as a development fallback
-- HTML HUD — compass, vitals, ammo, killfeed, crosshair
+## Release profiles
 
-## Scripts
+NIGHTGLASS keeps two release profiles with different goals:
+
+- **Standalone browser release** ships the original procedural presentation and documented redistributable fallback assets in this repository. Run `npm run release:standalone`. It validates assets, executes the full automated suite, builds for `/` and `/test1/`, and performs finite production-browser smoke checks at 1280×720, 1920×1080 and a 3440×1440 CSS viewport. QA mutation hooks are absent from these production builds.
+- **Strict authored-asset profile** targets a separate high-fidelity handoff with supplied GLB/KTX2/audio/reference assets, native capture review, target-hardware performance evidence and blind review. Run `npm run qa:release`. This profile is still blocked and is documented in [docs/RELEASE-REVIEW.md](docs/RELEASE-REVIEW.md). Its requirements have not been weakened or relabelled as passed.
+
+Software-renderer smoke checks verify behavior and resource loading; they are not FPS evidence. Target-hardware measurements remain governed by [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
+## Production build and GitHub Pages
 
 ```bash
-npm run dev       # Vite dev server
-npm run build     # Typecheck + production bundle
-npm test          # Deterministic engine and mission tests
-npm run preview   # Serve dist/
-npm run qa:assets # Blocks release until the licensed asset handoff is complete
-npm run qa:capture # Deterministic quick capture and renderer statistics
-npm run qa:capture:matrix # Full resolution/scenario/debug capture matrix (release)
-npm run qa:capture:matrix:dev # Full capture matrix without release-mode gates
-npm run qa:visual:prepare # Bind a native-resolution visual checklist to exact capture bytes
-npm run qa:capture:verify # Reject missing/fallback/over-budget/unreviewed capture sets
-npm run qa:performance:capture # Generate hashed raw evidence on the target RTX/Chromium desktop
-npm run qa:performance # Recompute the High/1440p gate from hashed raw hardware samples
-npm run qa:review:prepare # Randomize matched legal A/B review pairs
-npm run qa:review:score # Enforce three-reviewer and two-round score gates
-npm run qa:release # Fail-closed release-readiness gate (assets, capture, performance, blind review)
+npm run release:standalone
+VITE_BASE_PATH=/test1/ npm run build
 ```
 
-Visual QA captures default to `artifacts/screenshots` and can be regenerated against the preview server with `node scripts/capture-screens.mjs`. Asset provenance is recorded in `public/assets/ASSET-LICENSES.md`.
-The required ten-minute hardware evidence format is documented in
-[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+The repository includes:
+
+- `.github/workflows/ci.yml` for clean install, tests, both deployment bases and bounded browser smoke checks.
+- `.github/workflows/pages.yml` for a manual, verified GitHub Pages deployment.
+
+After pushing to GitHub, enable **Settings → Pages → Source: GitHub Actions**, open **Actions → Deploy GitHub Pages**, and run the workflow. The workflow derives the Pages base from the repository name, so a renamed repository is supported.
+
+## Assets and runtime dependencies
+
+Asset provenance and redistribution notes are in [public/assets/ASSET-LICENSES.md](public/assets/ASSET-LICENSES.md). Poly Haven files are CC0; the remaining shipped bitmap art is original project material. Runtime geometry and audio not listed there are generated by project code. The standalone build uses system font stacks and makes no external font, CDN or API request.
+
+Vite resolves textures, environment maps, manifests and decoder files relative to its deployment base. Production QA controls are compiled only when `VITE_ENABLE_QA=1`; ordinary `npm run build` and Pages builds do not expose them.
+
+## Useful commands
+
+```bash
+npm run dev                    # Vite development server
+npm run build                  # Typecheck and production bundle
+npm test                       # Deterministic engine, gameplay and QA tests
+npm run release:standalone     # Standalone release gate for / and /test1/
+npm run qa:standalone:assets   # Standalone asset/provenance/base-path checks
+npm run qa:standalone:verify   # Reject missing or stale browser evidence
+npm run build:qa               # Explicit test build with QA mutation hooks
+npm run qa:assets              # Strict authored-asset contract
+npm run qa:release             # Strict authored release gate; currently blocked
+```
+
+The implementation is an original project and is not affiliated with or presented as a Call of Duty product.

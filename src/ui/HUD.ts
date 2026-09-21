@@ -40,6 +40,14 @@ export interface HUDMissionResult {
   subtitle?: string;
   /** Optional restart/continue hint. */
   action?: string;
+  elapsedSeconds?: number;
+  kills?: number;
+  deaths?: number;
+}
+
+export interface HUDCallbacks {
+  onReplay?: () => void;
+  onMainMenu?: () => void;
 }
 
 interface KillfeedItem {
@@ -100,6 +108,8 @@ export class HUD {
   private missionResultTitle!: HTMLElement;
   private missionResultSubtitle!: HTMLElement;
   private missionResultAction!: HTMLElement;
+  private missionResultStats!: HTMLElement;
+  private controlPrompt!: HTMLElement;
 
   private spread = 0;
   private targetSpread = 4;
@@ -111,8 +121,13 @@ export class HUD {
   private raf = 0;
   private lastTime = performance.now();
   private checkpointTimer: number | undefined;
+  private objectiveKey: string | undefined;
+  private interactText: string | null | undefined;
+  private ammoKey = '';
+  private weaponStatus!: HTMLElement;
+  private vitalsKey = '';
 
-  constructor(container?: HTMLElement) {
+  constructor(container?: HTMLElement, callbacks: HUDCallbacks = {}) {
     const mount = container ?? document.getElementById('app') ?? document.body;
     this.root = document.createElement('div');
     this.root.id = 'hud-root';
@@ -120,6 +135,8 @@ export class HUD {
     this.root.innerHTML = this.buildMarkup();
     mount.appendChild(this.root);
     this.cacheElements();
+    this.root.querySelector('[data-action="replay"]')?.addEventListener('click', () => callbacks.onReplay?.());
+    this.root.querySelector('[data-action="main-menu"]')?.addEventListener('click', () => callbacks.onMainMenu?.());
     this.setVisible(false);
     this.tick = this.tick.bind(this);
     this.raf = requestAnimationFrame(this.tick);
@@ -132,6 +149,9 @@ export class HUD {
 
   /** Show, update, or clear the current mission objective. */
   setObjective(state: HUDObjectiveState | null): void {
+    const key = state ? `${state.title}|${state.description}|${state.status}|${state.progressLabel}|${Math.round((state.progress ?? -1) * 1000)}` : '';
+    if (key === this.objectiveKey) return;
+    this.objectiveKey = key;
     if (!state) {
       this.objective.classList.remove('hud-objective-visible');
       this.objective.setAttribute('aria-hidden', 'true');
@@ -158,6 +178,7 @@ export class HUD {
 
   /** Update objective progress without replacing its title or status. */
   setObjectiveProgress(progress: number, label?: string): void {
+    this.objectiveKey = undefined;
     const normalized = Math.min(1, Math.max(0, progress));
     this.objectiveProgress.hidden = false;
     this.objectiveProgressFill.style.transform = `scaleX(${normalized})`;
@@ -180,6 +201,19 @@ export class HUD {
     }, duration);
   }
 
+  /**
+   * Drop an in-flight checkpoint toast — used when the run is rewound
+   * (rematch / QA / session restore). Death restore must not call this after
+   * restoreCheckpoint(): that event shows "Checkpoint restored".
+   */
+  clearCheckpoint(): void {
+    if (this.checkpointTimer !== undefined) {
+      window.clearTimeout(this.checkpointTimer);
+      this.checkpointTimer = undefined;
+    }
+    this.checkpoint.classList.remove('hud-checkpoint-visible');
+  }
+
   /** Show the full-screen mission completion/failure treatment. */
   showMissionResult(result: HUDMissionResult): void {
     const completed = result.kind === 'completed';
@@ -192,6 +226,14 @@ export class HUD {
       (completed ? 'Extraction confirmed. Stand by for debrief.' : resolveDeathRestoreSubtitle(false));
     this.missionResultAction.textContent = result.action ?? '';
     this.missionResultAction.hidden = !result.action;
+    const stats = [
+      result.elapsedSeconds === undefined ? null : `TIME ${formatMissionTime(result.elapsedSeconds)}`,
+      result.kills === undefined ? null : `KILLS ${Math.max(0, Math.floor(result.kills))}`,
+      result.deaths === undefined ? null : `DEATHS ${Math.max(0, Math.floor(result.deaths))}`,
+    ].filter((value): value is string => value !== null);
+    this.missionResultStats.textContent = stats.join('  //  ');
+    this.missionResultStats.hidden = stats.length === 0;
+    this.missionResult.classList.toggle('hud-result-completed', completed);
     this.missionResult.classList.add('hud-result-visible');
     this.missionResult.setAttribute('aria-hidden', 'false');
   }
@@ -199,6 +241,11 @@ export class HUD {
   clearMissionResult(): void {
     this.missionResult.classList.remove('hud-result-visible');
     this.missionResult.setAttribute('aria-hidden', 'true');
+  }
+
+  showControlPrompt(text: string | null): void {
+    this.controlPrompt.textContent = text ?? '';
+    this.controlPrompt.classList.toggle('hud-control-prompt-visible', !!text);
   }
 
   setCrosshairVisible(visible: boolean): void {
@@ -224,13 +271,23 @@ export class HUD {
   }
 
   setAmmo(state: HUDAmmoState): void {
+    const key = `${state.magazine}/${state.reserve}/${state.magazineSize}`;
+    if (key === this.ammoKey) return;
+    this.ammoKey = key;
     this.ammoMag.textContent = String(Math.max(0, Math.floor(state.magazine)));
     this.ammoReserve.textContent = String(Math.max(0, Math.floor(state.reserve)));
     const low = state.magazine <= Math.max(1, Math.floor(state.magazineSize * 0.25));
     this.ammoMag.classList.toggle('hud-ammo-low', low);
   }
 
+  setWeaponStatus(text: string): void {
+    if (this.weaponStatus.textContent !== text) this.weaponStatus.textContent = text;
+  }
+
   setVitals(state: HUDVitalsState): void {
+    const key = `${state.health}/${state.maxHealth}/${state.armor}/${state.maxArmor}`;
+    if (key === this.vitalsKey) return;
+    this.vitalsKey = key;
     const hpPct = state.maxHealth > 0 ? (state.health / state.maxHealth) * 100 : 0;
     const arPct = state.maxArmor > 0 ? (state.armor / state.maxArmor) * 100 : 0;
     this.healthFill.style.width = `${Math.min(100, Math.max(0, hpPct))}%`;
@@ -270,9 +327,9 @@ export class HUD {
    */
   setDamage(intensity: number, flash = true): void {
     const d = Math.min(1, Math.max(0, intensity));
-    this.damageVignette.style.opacity = String(0.15 + d * 0.75);
+    this.damageVignette.style.opacity = String(0.04 + d * 0.44);
     if (flash) {
-      this.damageFlash = 0.35;
+      this.damageFlash = 0.28;
       this.root.classList.add('hud-damage-flash');
     }
   }
@@ -311,6 +368,8 @@ export class HUD {
   }
 
   showInteract(text: string | null): void {
+    if (text === this.interactText) return;
+    this.interactText = text;
     if (!text) {
       this.interactPrompt.classList.remove('hud-prompt-visible');
       this.interactPrompt.textContent = '';
@@ -325,7 +384,7 @@ export class HUD {
     if (this.disposed) return;
     this.disposed = true;
     cancelAnimationFrame(this.raf);
-    if (this.checkpointTimer !== undefined) window.clearTimeout(this.checkpointTimer);
+    this.clearCheckpoint();
     this.root.remove();
   }
 
@@ -381,6 +440,7 @@ export class HUD {
     this.crossLeft = this.root.querySelector('.hud-cross-l')!;
     this.crossRight = this.root.querySelector('.hud-cross-r')!;
     this.ammoMag = this.root.querySelector('.hud-ammo-mag')!;
+    this.weaponStatus = this.root.querySelector('.hud-weapon-status')!;
     this.ammoReserve = this.root.querySelector('.hud-ammo-reserve')!;
     this.healthFill = this.root.querySelector('.hud-health-fill')!;
     this.armorFill = this.root.querySelector('.hud-armor-fill')!;
@@ -406,6 +466,8 @@ export class HUD {
     this.missionResultTitle = this.root.querySelector('.hud-result-title')!;
     this.missionResultSubtitle = this.root.querySelector('.hud-result-subtitle')!;
     this.missionResultAction = this.root.querySelector('.hud-result-action')!;
+    this.missionResultStats = this.root.querySelector('.hud-result-stats')!;
+    this.controlPrompt = this.root.querySelector('.hud-control-prompt')!;
     void this.crosshair;
   }
 
@@ -458,6 +520,7 @@ export class HUD {
       </div>
 
       <div class="hud-interact" role="status"></div>
+      <div class="hud-control-prompt" role="status" aria-live="polite"></div>
 
       <section class="hud-mission-result" aria-live="assertive" aria-hidden="true">
         <div class="hud-result-scan"></div>
@@ -465,7 +528,12 @@ export class HUD {
           <p class="hud-result-kicker">MISSION COMPLETE</p>
           <h2 class="hud-result-title">Objective secured</h2>
           <p class="hud-result-subtitle">Extraction confirmed. Stand by for debrief.</p>
+          <p class="hud-result-stats" hidden></p>
           <p class="hud-result-action" hidden></p>
+          <div class="hud-result-actions">
+            <button type="button" data-action="replay">REPLAY MISSION</button>
+            <button type="button" data-action="main-menu">MAIN MENU</button>
+          </div>
         </div>
       </section>
 
@@ -489,6 +557,7 @@ export class HUD {
       </div>
 
       <div class="hud-bottom-right">
+        <div class="hud-weapon-status" role="status"></div>
         <div class="hud-weapon-name">ASSAULT RIFLE</div>
         <div class="hud-ammo">
           <span class="hud-ammo-mag">30</span>
@@ -509,15 +578,21 @@ export function formatInteractPrompt(text: string): string {
 }
 
 /**
- * Single HUD interact slot: jammer/objective prompts beat wave toasts so
- * syncMissionHud cannot wipe an in-range interact, while an active toast keeps
- * the slot when nothing higher-priority is showing.
+ * Single HUD interact slot: jammer/objective prompts beat combat toasts so
+ * syncMissionHud cannot wipe an in-range interact. Frag-out beats the wave
+ * toast so a throw is not overwritten the same tick, while an active toast
+ * keeps the slot when nothing higher-priority is showing.
  */
 export function resolveMissionInteractPrompt(options: {
   jammerInteractAvailable: boolean;
   waveToastRemaining: number;
+  fragToastRemaining?: number;
+  fragCount?: number;
 }): string | null {
   if (options.jammerInteractAvailable) return 'DISABLE SIGNAL JAMMER';
+  if ((options.fragToastRemaining ?? 0) > 0) {
+    return `FRAG OUT — ${options.fragCount ?? 0} REMAINING`;
+  }
   if (options.waveToastRemaining > 0) return 'INCOMING — HOSTILES REINFORCING';
   return null;
 }
@@ -527,6 +602,12 @@ export function resolveDeathRestoreSubtitle(hasCheckpoint: boolean): string {
   return hasCheckpoint
     ? 'Restoring the last secure checkpoint.'
     : 'Restarting Operation Nightglass.';
+}
+
+export function formatMissionTime(seconds: number): string {
+  const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const minutes = Math.floor(total / 60);
+  return `${String(minutes).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
 function escapeHtml(s: string): string {

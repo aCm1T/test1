@@ -267,12 +267,14 @@ for (const entry of references) {
 }
 
 if (errors.length > 0) {
-  console.error('NIGHTGLASS asset release gate: BLOCKED');
-  for (const error of errors) console.error(`- ${error}`);
-  process.exit(1);
+  fs.writeSync(
+    process.stderr.fd,
+    `NIGHTGLASS asset release gate: BLOCKED\n${errors.map((error) => `- ${error}`).join('\n')}\n`,
+  );
+  process.exitCode = 1;
+} else {
+  console.log(`NIGHTGLASS asset release gate: PASS (${entries.length} manifest assets)`);
 }
-
-console.log(`NIGHTGLASS asset release gate: PASS (${entries.length} manifest assets)`);
 
 function validateProvenance(entry) {
   if (isPlaceholder(entry.metadata?.sourceRecord)) errors.push(`${entry.id}: missing source record`);

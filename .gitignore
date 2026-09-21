@@ -5,3 +5,7 @@ dist/
 .vite/
 artifacts/
 scripts/_scratch_*.mjs
+
+# AI tools
+.cursor/
+.codex/

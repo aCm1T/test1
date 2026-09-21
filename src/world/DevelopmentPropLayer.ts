@@ -12,6 +12,7 @@ import {
   type Object3D,
 } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { assetUrl } from '../AssetPaths';
 
 /**
  * A deliberately separate, CC0 development-only set of visual replacements.
@@ -22,7 +23,7 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
  * succeeds, and release mode never constructs this layer.
  */
 export const DEVELOPMENT_BARREL_URL =
-  '/assets/development/cc0-props/Barrel_01_1k.gltf';
+  assetUrl('assets/development/cc0-props/Barrel_01_1k.gltf');
 
 /**
  * The complete 1K glTF package contains clean and weathered condensers as a
@@ -30,7 +31,7 @@ export const DEVELOPMENT_BARREL_URL =
  * rest of this layer and is never a substitute for the authored environment.
  */
 export const DEVELOPMENT_EXTERIOR_AIRCON_URL =
-  '/assets/development/cc0-props/exterior_aircon_unit/exterior_aircon_unit_1k.gltf';
+  assetUrl('assets/development/cc0-props/exterior_aircon_unit/exterior_aircon_unit_1k.gltf');
 
 export interface DevelopmentPropPlacement {
   /** World-space placement relative to the procedural Level group. */
@@ -183,7 +184,7 @@ export const DEVELOPMENT_PROP_DESCRIPTORS: readonly DevelopmentPropDescriptor[] 
   },
   {
     id: 'plastic-crate-02',
-    url: '/assets/development/cc0-props/plastic_crate_02/plastic_crate_02_1k.gltf',
+    url: assetUrl('assets/development/cc0-props/plastic_crate_02/plastic_crate_02_1k.gltf'),
     placements: [
       ...DEVELOPMENT_CRATE_PLACEMENTS,
       ...DEVELOPMENT_FORWARD_ROUTE_CRATE_PLACEMENTS,
@@ -193,7 +194,7 @@ export const DEVELOPMENT_PROP_DESCRIPTORS: readonly DevelopmentPropDescriptor[] 
   },
   {
     id: 'utility-box-01',
-    url: '/assets/development/cc0-props/utility_box_01/utility_box_01_1k.gltf',
+    url: assetUrl('assets/development/cc0-props/utility_box_01/utility_box_01_1k.gltf'),
     placements: [
       ...DEVELOPMENT_UTILITY_BOX_PLACEMENTS,
       ...DEVELOPMENT_FORWARD_ROUTE_UTILITY_BOX_PLACEMENTS,
@@ -387,9 +388,10 @@ export const PROP_SHADOW_MIN_SCALE = 0.98;
 /**
  * Turns one CC0 source scene into a single colour InstancedMesh per surface
  * (every placement, no near/far colour split) plus one near-only caster from
- * the dominant opaque prim. Splitting colour by shadow bucket doubled draws
- * and would blow DrawBudget if the shipped aircon (4 GLTF prims) entered the
- * near radius.
+ * the dominant opaque prim. The caster is shadow-map only — a beauty-pass
+ * duplicate of the same near matrices z-fights the colour batch. Splitting
+ * colour by shadow bucket doubled draws and would blow DrawBudget if the
+ * shipped aircon (4 GLTF prims) entered the near radius.
  */
 function instancePlacements(source: Object3D, descriptor: DevelopmentPropDescriptor): Group {
   const group = new Group();
@@ -466,7 +468,11 @@ function appendInstancedMesh(
   suffix: string,
 ): void {
   const world = new Matrix4();
-  const batch = new InstancedMesh(mesh.geometry, mesh.material, placements.length);
+  const batch = new InstancedMesh(
+    mesh.geometry,
+    castShadow ? shadowOnlyMaterial(mesh.material) : mesh.material,
+    placements.length,
+  );
   batch.name = `${group.name}:${mesh.name || 'surface'}:${suffix}`;
   batch.instanceMatrix.setUsage(StaticDrawUsage);
   for (const [index, placement] of placements.entries()) {
@@ -477,8 +483,21 @@ function appendInstancedMesh(
   batch.instanceMatrix.needsUpdate = true;
   batch.computeBoundingSphere();
   batch.castShadow = castShadow;
-  batch.receiveShadow = true;
+  batch.receiveShadow = !castShadow;
   group.add(batch);
+}
+
+/** Beauty-pass no-op so a near caster cannot z-fight the colour instance. */
+function shadowOnlyMaterial(material: Mesh['material']): Mesh['material'] {
+  if (Array.isArray(material)) return material.map(cloneShadowOnly);
+  return cloneShadowOnly(material);
+}
+
+function cloneShadowOnly(material: Material): Material {
+  const clone = material.clone();
+  clone.colorWrite = false;
+  clone.depthWrite = false;
+  return clone;
 }
 
 function isTransparentMesh(mesh: Mesh): boolean {
@@ -492,7 +511,9 @@ function configureVisualOnly(root: Object3D): void {
     node.userData.visualOnly = true;
     const mesh = node as Mesh;
     if (!mesh.isMesh) return;
-    mesh.receiveShadow = true;
+    // Shadow-only casters must not receive in the beauty pass — they share
+    // near matrices with the colour batch and would z-fight if they wrote.
+    if (!mesh.castShadow) mesh.receiveShadow = true;
   });
 }
 

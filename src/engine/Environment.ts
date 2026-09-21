@@ -206,7 +206,9 @@ export function setupEnvironment(
   // The dome sits at radius 380, well past PMREMGenerator's default 100-unit
   // far plane; without an explicit far the probe would capture only clipped
   // background and the whole scene would lose its indirect light.
-  const envRT = pmrem.fromScene(skyProbeScene, 0.06, 0.1, 1000);
+  // Three caps PMREM's blur kernel at 20 samples. 0.04 radians reaches that
+  // ceiling without requesting 30 samples and clipping on every startup.
+  const envRT = pmrem.fromScene(skyProbeScene, 0.04, 0.1, 1000);
   skyProbeScene.remove(skyProbe);
   skyProbeMat.dispose();
 
@@ -289,19 +291,23 @@ export function setupEnvironment(
   };
 
   const update = (position: Pick<Vector3, 'x' | 'y' | 'z'>): void => {
-    let nearest: { id: string; distanceSq: number; target: WebGLRenderTarget } | null = null;
+    let nearestId: string | null = null;
+    let nearestDistanceSq = Infinity;
+    let nearestTarget: WebGLRenderTarget | null = null;
     for (const [id, probe] of probes) {
       const dx = position.x - probe.position[0];
       const dy = position.y - probe.position[1];
       const dz = position.z - probe.position[2];
       const distanceSq = dx * dx + dy * dy + dz * dz;
-      if (!nearest || distanceSq < nearest.distanceSq) {
-        nearest = { id, distanceSq, target: probe.target };
+      if (distanceSq < nearestDistanceSq) {
+        nearestId = id;
+        nearestDistanceSq = distanceSq;
+        nearestTarget = probe.target;
       }
     }
-    if (!nearest || nearest.id === activeProbeId) return;
-    activeProbeId = nearest.id;
-    scene.environment = nearest.target.texture;
+    if (!nearestId || !nearestTarget || nearestId === activeProbeId) return;
+    activeProbeId = nearestId;
+    scene.environment = nearestTarget.texture;
   };
 
   const clearAuthoredTextures = (): void => {

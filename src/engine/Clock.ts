@@ -1,4 +1,4 @@
-import { Clock } from 'three';
+import { Timer } from 'three';
 
 export interface GameClockOptions {
   /** Maximum delta in seconds — prevents spiral-of-death after tab blur. */
@@ -11,7 +11,7 @@ export interface GameClockOptions {
  * Frame clock with clamped getDelta for stable FPS simulation.
  */
 export class GameClock {
-  private readonly clock: Clock;
+  private readonly timer: Timer;
   private readonly maxDelta: number;
   readonly fixedStep: number;
 
@@ -21,19 +21,21 @@ export class GameClock {
   private running = true;
 
   constructor(options: GameClockOptions = {}) {
-    this.clock = new Clock(false);
+    this.timer = new Timer();
     this.maxDelta = options.maxDelta ?? 0.05; // 20 FPS floor
     this.fixedStep = options.fixedStep ?? 1 / 60;
   }
 
   start(): void {
     this.running = true;
-    this.clock.start();
+    // Timer is explicitly sampled. Reset + one update establishes a zero-delta
+    // baseline so resuming never counts time spent stopped.
+    this.timer.reset();
+    this.timer.update();
   }
 
   stop(): void {
     this.running = false;
-    this.clock.stop();
   }
 
   /**
@@ -45,7 +47,8 @@ export class GameClock {
       return 0;
     }
 
-    const raw = this.clock.getDelta();
+    this.timer.update();
+    const raw = this.timer.getDelta();
     const dt = Math.min(Math.max(raw, 0), this.maxDelta);
     this.lastDelta = dt;
     this.elapsed += dt;
@@ -80,11 +83,15 @@ export class GameClock {
   }
 
   reset(): void {
-    this.clock.stop();
-    this.clock.start();
+    this.timer.reset();
+    this.timer.update();
     this.lastDelta = 0;
     this.accumulator = 0;
     this.elapsed = 0;
     this.running = true;
+  }
+
+  dispose(): void {
+    this.timer.dispose();
   }
 }

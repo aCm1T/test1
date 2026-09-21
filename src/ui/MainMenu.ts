@@ -1,4 +1,5 @@
 import { normalizeQualityPreference, type QualityPreference } from '../engine';
+import { requestPointerLockSafely } from '../player/PointerLock';
 
 export interface MainMenuSettings {
   sensitivity: number;
@@ -18,6 +19,8 @@ export interface MainMenuSettings {
 export interface MainMenuCallbacks {
   onPlay: (settings: MainMenuSettings) => void;
   onSettingsChange?: (settings: MainMenuSettings) => void;
+  onRestart?: () => void;
+  onReturnToMenu?: () => void;
 }
 
 export const DEFAULT_MAIN_MENU_SETTINGS: Required<MainMenuSettings> = {
@@ -44,11 +47,21 @@ export class MainMenu {
   private panelMain!: HTMLElement;
   private panelSettings!: HTMLElement;
   private panelControls!: HTMLElement;
+  private graphicsListbox!: HTMLElement;
+  private graphicsButton!: HTMLButtonElement;
+  private graphicsOpen = false;
+  private inSession = false;
   private disposed = false;
 
   constructor(callbacks: MainMenuCallbacks, container?: HTMLElement) {
     this.callbacks = callbacks;
     this.settings = { ...DEFAULT_MAIN_MENU_SETTINGS };
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('nightglass.settings.v1') ?? 'null');
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        this.settings = normalizeSettings({ ...this.settings, ...saved });
+      }
+    } catch { /* Storage may be unavailable; defaults remain playable. */ }
 
     const mount = container ?? document.getElementById('app') ?? document.body;
     this.root = document.createElement('div');
@@ -59,12 +72,35 @@ export class MainMenu {
 
     this.cacheElements();
     this.bindEvents();
+    this.syncSliders();
     this.showPanel('main');
   }
 
   show(): void {
     this.root.classList.remove('main-menu-hidden');
     this.root.setAttribute('aria-hidden', 'false');
+  }
+
+  setInSession(inSession: boolean): void {
+    this.inSession = inSession;
+    const label = this.root.querySelector('[data-play-label]');
+    if (label) label.textContent = inSession ? 'RESUME' : 'PLAY';
+    const subtitle = this.root.querySelector('.mm-subtitle');
+    if (subtitle) subtitle.textContent = inSession ? 'OPERATION PAUSED' : 'OPERATION NIGHTGLASS';
+    const hint = this.root.querySelector('[data-deploy-hint]');
+    if (hint) hint.textContent = inSession ? 'PRESS ENTER TO RESUME' : 'PRESS ENTER TO DEPLOY';
+    this.root.querySelectorAll<HTMLElement>('[data-session-action]').forEach((element) => {
+      element.hidden = !inSession;
+    });
+  }
+
+  setLoading(loading: boolean): void {
+    const play = this.root.querySelector<HTMLButtonElement>('[data-action="play"]');
+    if (!play) return;
+    play.disabled = loading || this.root.classList.contains('main-menu-launch-blocked');
+    const label = this.root.querySelector('[data-play-label]');
+    if (label) label.textContent = loading ? 'LOADING…' : this.inSession ? 'RESUME' : 'PLAY';
+    this.root.classList.toggle('main-menu-loading', loading);
   }
 
   hide(): void {
@@ -112,6 +148,8 @@ export class MainMenu {
     this.panelMain = this.root.querySelector('[data-panel="main"]')!;
     this.panelSettings = this.root.querySelector('[data-panel="settings"]')!;
     this.panelControls = this.root.querySelector('[data-panel="controls"]')!;
+    this.graphicsListbox = this.root.querySelector('[data-graphics-listbox]')!;
+    this.graphicsButton = this.root.querySelector('[data-graphics-button]')!;
   }
 
   private bindEvents(): void {
@@ -126,6 +164,12 @@ export class MainMenu {
     this.root.querySelector('[data-action="controls"]')?.addEventListener('click', () => {
       this.showPanel('controls');
     });
+    this.root.querySelector('[data-action="restart"]')?.addEventListener('click', () => {
+      this.callbacks.onRestart?.();
+    });
+    this.root.querySelector('[data-action="return-menu"]')?.addEventListener('click', () => {
+      this.callbacks.onReturnToMenu?.();
+    });
 
     this.root.querySelectorAll('[data-action="back"]').forEach((btn) => {
       btn.addEventListener('click', () => this.showPanel('main'));
@@ -139,24 +183,24 @@ export class MainMenu {
     const reducedMotion = this.root.querySelector<HTMLInputElement>('#mm-reduced-motion');
     const toggleAds = this.root.querySelector<HTMLInputElement>('#mm-toggle-ads');
     const crosshair = this.root.querySelector<HTMLInputElement>('#mm-crosshair');
-    const graphicsTier = this.root.querySelector<HTMLSelectElement>('#mm-graphics-tier');
+    const graphicsOptions = [...this.root.querySelectorAll<HTMLElement>('[role="option"][data-value]')];
 
     sens?.addEventListener('input', () => {
       this.settings.sensitivity = parseFloat(sens.value);
       this.updateSliderLabel('mm-sensitivity-val', this.settings.sensitivity.toFixed(2));
-      this.callbacks.onSettingsChange?.(this.getSettings());
+      this.emitSettings();
     });
 
     master?.addEventListener('input', () => {
       this.settings.masterVolume = parseFloat(master.value);
       this.updateSliderLabel('mm-master-vol-val', Math.round(this.settings.masterVolume * 100) + '%');
-      this.callbacks.onSettingsChange?.(this.getSettings());
+      this.emitSettings();
     });
 
     sfx?.addEventListener('input', () => {
       this.settings.sfxVolume = parseFloat(sfx.value);
       this.updateSliderLabel('mm-sfx-vol-val', Math.round(this.settings.sfxVolume * 100) + '%');
-      this.callbacks.onSettingsChange?.(this.getSettings());
+      this.emitSettings();
     });
 
     ads?.addEventListener('input', () => {
@@ -187,10 +231,12 @@ export class MainMenu {
       this.emitSettings();
     });
 
-    graphicsTier?.addEventListener('change', () => {
-      this.settings.graphicsTier = normalizeQualityPreference(graphicsTier.value);
-      this.emitSettings();
-    });
+    this.graphicsButton.addEventListener('click', () => this.setGraphicsOpen(!this.graphicsOpen));
+    this.graphicsButton.addEventListener('keydown', (event) => this.onGraphicsKeyDown(event));
+    this.graphicsListbox.addEventListener('keydown', (event) => this.onGraphicsKeyDown(event));
+    graphicsOptions.forEach((option) => option.addEventListener('click', () => {
+      this.selectGraphics(option.dataset.value ?? 'auto');
+    }));
 
     // Keyboard: Enter to play from main panel
     window.addEventListener('keydown', this.onKeyDown);
@@ -198,6 +244,11 @@ export class MainMenu {
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (this.disposed || !this.isVisible()) return;
+    if (e.code === 'Escape' && this.graphicsOpen) {
+      e.preventDefault();
+      this.setGraphicsOpen(false, true);
+      return;
+    }
     if (e.code === 'Enter' && this.panelMain.classList.contains('mm-panel-active')) {
       e.preventDefault();
       this.startPlay();
@@ -211,19 +262,13 @@ export class MainMenu {
     const play = this.root.querySelector<HTMLButtonElement>('[data-action="play"]');
     if (play?.disabled) return;
     const target = document.getElementById('app') ?? document.body;
-    const requestLock = (): void => {
-      const el = target.querySelector('canvas') ?? target;
-      if (el.requestPointerLock) {
-        el.requestPointerLock();
-      }
-    };
-
-    requestLock();
+    requestPointerLockSafely(target.querySelector('canvas') ?? target);
     this.hide();
     this.callbacks.onPlay(this.getSettings());
   }
 
   private showPanel(name: 'main' | 'settings' | 'controls'): void {
+    this.setGraphicsOpen(false);
     this.panelMain.classList.toggle('mm-panel-active', name === 'main');
     this.panelSettings.classList.toggle('mm-panel-active', name === 'settings');
     this.panelControls.classList.toggle('mm-panel-active', name === 'controls');
@@ -238,7 +283,6 @@ export class MainMenu {
     const reducedMotion = this.root.querySelector<HTMLInputElement>('#mm-reduced-motion');
     const toggleAds = this.root.querySelector<HTMLInputElement>('#mm-toggle-ads');
     const crosshair = this.root.querySelector<HTMLInputElement>('#mm-crosshair');
-    const graphicsTier = this.root.querySelector<HTMLSelectElement>('#mm-graphics-tier');
     if (sens) sens.value = String(this.settings.sensitivity);
     if (master) master.value = String(this.settings.masterVolume);
     if (sfx) sfx.value = String(this.settings.sfxVolume);
@@ -247,7 +291,7 @@ export class MainMenu {
     if (reducedMotion) reducedMotion.checked = this.settings.reducedMotion;
     if (toggleAds) toggleAds.checked = this.settings.toggleADS;
     if (crosshair) crosshair.checked = this.settings.showCrosshair;
-    if (graphicsTier) graphicsTier.value = this.settings.graphicsTier;
+    this.syncGraphicsListbox();
     this.updateSliderLabel('mm-sensitivity-val', this.settings.sensitivity.toFixed(2));
     this.updateSliderLabel('mm-master-vol-val', Math.round(this.settings.masterVolume * 100) + '%');
     this.updateSliderLabel('mm-sfx-vol-val', Math.round(this.settings.sfxVolume * 100) + '%');
@@ -257,12 +301,79 @@ export class MainMenu {
   }
 
   private emitSettings(): void {
+    try {
+      window.localStorage.setItem('nightglass.settings.v1', JSON.stringify(this.settings));
+    } catch { /* Settings still apply when persistence is blocked. */ }
     this.callbacks.onSettingsChange?.(this.getSettings());
   }
 
   private updateSliderLabel(id: string, text: string): void {
     const el = this.root.querySelector(`#${id}`);
     if (el) el.textContent = text;
+  }
+
+  private setGraphicsOpen(open: boolean, restoreFocus = false): void {
+    this.graphicsOpen = open;
+    this.graphicsButton.setAttribute('aria-expanded', String(open));
+    this.graphicsListbox.hidden = !open;
+    this.root.querySelector('.mm-select-shell')?.classList.toggle('mm-listbox-open', open);
+    if (open) {
+      this.graphicsListbox.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
+    } else if (restoreFocus) {
+      this.graphicsButton.focus();
+    }
+  }
+
+  private onGraphicsKeyDown(event: KeyboardEvent): void {
+    const options = [...this.graphicsListbox.querySelectorAll<HTMLElement>('[role="option"]')];
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setGraphicsOpen(false, true);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      if (!this.graphicsOpen) this.setGraphicsOpen(true);
+      else if (document.activeElement instanceof HTMLElement) {
+        this.selectGraphics(document.activeElement.dataset.value ?? this.settings.graphicsTier);
+      }
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    if (!this.graphicsOpen) this.setGraphicsOpen(true);
+    const current = Math.max(0, options.indexOf(document.activeElement as HTMLElement));
+    const next = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? options.length - 1
+        : (current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+    options[next]?.focus();
+  }
+
+  private selectGraphics(value: string): void {
+    this.settings.graphicsTier = normalizeQualityPreference(value);
+    this.syncGraphicsListbox();
+    this.setGraphicsOpen(false, true);
+    this.emitSettings();
+  }
+
+  private syncGraphicsListbox(): void {
+    const labels: Record<QualityPreference, string> = {
+      auto: 'AUTO (ADAPTIVE)',
+      low: 'LOW',
+      medium: 'MEDIUM',
+      high: 'HIGH',
+      ultra: 'ULTRA',
+    };
+    const value = this.graphicsButton.querySelector<HTMLElement>('[data-graphics-value]');
+    if (value) value.textContent = labels[this.settings.graphicsTier];
+    this.graphicsListbox.querySelectorAll<HTMLElement>('[role="option"]').forEach((option) => {
+      const selected = option.dataset.value === this.settings.graphicsTier;
+      option.setAttribute('aria-selected', String(selected));
+      option.tabIndex = selected ? 0 : -1;
+    });
   }
 
   private buildMarkup(): string {
@@ -281,7 +392,7 @@ export class MainMenu {
         <div class="mm-panels">
           <nav class="mm-panel mm-panel-active" data-panel="main" aria-label="Main menu">
             <button type="button" class="mm-btn mm-btn-primary" data-action="play">
-              <span class="mm-btn-tag">01</span> PLAY
+              <span class="mm-btn-tag">01</span> <span data-play-label>PLAY</span>
             </button>
             <p class="mm-launch-notice" data-launch-notice role="status" hidden></p>
             <button type="button" class="mm-btn" data-action="settings">
@@ -289,6 +400,12 @@ export class MainMenu {
             </button>
             <button type="button" class="mm-btn" data-action="controls">
               <span class="mm-btn-tag">03</span> CONTROLS
+            </button>
+            <button type="button" class="mm-btn" data-action="restart" data-session-action hidden>
+              <span class="mm-btn-tag">04</span> RESTART MISSION
+            </button>
+            <button type="button" class="mm-btn mm-btn-ghost" data-action="return-menu" data-session-action hidden>
+              RETURN TO MAIN MENU
             </button>
           </nav>
 
@@ -305,13 +422,21 @@ export class MainMenu {
 
             <label class="mm-slider">
               <span class="mm-slider-label">GRAPHICS TIER <b>CAPABILITY CAPPED</b></span>
-              <select id="mm-graphics-tier" aria-label="Graphics tier">
-                <option value="auto">AUTO (RECOMMENDED)</option>
-                <option value="low">LOW</option>
-                <option value="medium">MEDIUM</option>
-                <option value="high">HIGH</option>
-                <option value="ultra">ULTRA</option>
-              </select>
+              <span class="mm-select-shell">
+                <button type="button" class="mm-listbox-button" data-graphics-button
+                  role="combobox" aria-label="Graphics tier" aria-haspopup="listbox"
+                  aria-controls="mm-graphics-listbox" aria-expanded="false">
+                  <span data-graphics-value>AUTO (ADAPTIVE)</span><i aria-hidden="true"></i>
+                </button>
+                <span id="mm-graphics-listbox" class="mm-listbox" data-graphics-listbox
+                  role="listbox" aria-label="Graphics tier" hidden>
+                  <button type="button" role="option" data-value="auto" aria-selected="true">AUTO (ADAPTIVE)</button>
+                  <button type="button" role="option" data-value="low" aria-selected="false">LOW</button>
+                  <button type="button" role="option" data-value="medium" aria-selected="false">MEDIUM</button>
+                  <button type="button" role="option" data-value="high" aria-selected="false">HIGH</button>
+                  <button type="button" role="option" data-value="ultra" aria-selected="false">ULTRA</button>
+                </span>
+              </span>
             </label>
 
             <label class="mm-slider">
@@ -374,13 +499,15 @@ export class MainMenu {
               <li><kbd>W A S D</kbd> <span>Move</span></li>
               <li><kbd>MOUSE</kbd> <span>Look</span></li>
               <li><kbd>LMB</kbd> <span>Fire</span></li>
+              <li><kbd>RMB</kbd> <span>Aim down sights</span></li>
               <li><kbd>R</kbd> <span>Reload</span></li>
               <li><kbd>SHIFT</kbd> <span>Sprint</span></li>
-              <li><kbd>CTRL / C</kbd> <span>Crouch</span></li>
-              <li><kbd>SPACE</kbd> <span>Jump</span></li>
-              <li><kbd>1 – 4</kbd> <span>Weapons</span></li>
+              <li><kbd>CTRL / C</kbd> <span>Crouch / Slide</span></li>
+              <li><kbd>SPACE</kbd> <span>Jump / Mantle</span></li>
+              <li><kbd>1 – 3</kbd> <span>AR / Pistol / Knife</span></li>
+              <li><kbd>WHEEL</kbd> <span>Cycle weapons</span></li>
               <li><kbd>G</kbd> <span>Frag grenade</span></li>
-              <li><kbd>F</kbd> <span>Interact</span></li>
+              <li><kbd>E / F</kbd> <span>Interact</span></li>
               <li><kbd>ESC</kbd> <span>Menu / Unlock</span></li>
             </ul>
             <button type="button" class="mm-btn mm-btn-ghost" data-action="back">← BACK</button>
@@ -390,7 +517,7 @@ export class MainMenu {
         <footer class="mm-footer">
           <span>BUILD 1.0.0</span>
           <span class="mm-footer-sep">//</span>
-          <span>PRESS ENTER TO DEPLOY</span>
+          <span data-deploy-hint>PRESS ENTER TO DEPLOY</span>
         </footer>
       </div>
     `;
@@ -409,9 +536,9 @@ function normalizeSettings(settings: MainMenuSettings): Required<MainMenuSetting
       DEFAULT_MAIN_MENU_SETTINGS.adsMultiplier,
     ),
     fieldOfView: clamp(settings.fieldOfView, 70, 120, DEFAULT_MAIN_MENU_SETTINGS.fieldOfView),
-    reducedMotion: settings.reducedMotion ?? DEFAULT_MAIN_MENU_SETTINGS.reducedMotion,
-    toggleADS: settings.toggleADS ?? DEFAULT_MAIN_MENU_SETTINGS.toggleADS,
-    showCrosshair: settings.showCrosshair ?? DEFAULT_MAIN_MENU_SETTINGS.showCrosshair,
+    reducedMotion: typeof settings.reducedMotion === 'boolean' ? settings.reducedMotion : DEFAULT_MAIN_MENU_SETTINGS.reducedMotion,
+    toggleADS: typeof settings.toggleADS === 'boolean' ? settings.toggleADS : DEFAULT_MAIN_MENU_SETTINGS.toggleADS,
+    showCrosshair: typeof settings.showCrosshair === 'boolean' ? settings.showCrosshair : DEFAULT_MAIN_MENU_SETTINGS.showCrosshair,
     graphicsTier: normalizeQualityPreference(settings.graphicsTier),
   };
 }

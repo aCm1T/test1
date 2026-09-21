@@ -95,11 +95,14 @@ for (const [resolution, dimensions] of Object.entries(RESOLUTIONS)) {
 validateVisualInspection();
 
 if (errors.length > 0) {
-  console.error('NIGHTGLASS capture matrix gate: BLOCKED');
-  for (const error of errors) console.error(`- ${error}`);
-  process.exit(1);
+  fs.writeSync(
+    process.stderr.fd,
+    `NIGHTGLASS capture matrix gate: BLOCKED\n${errors.map((error) => `- ${error}`).join('\n')}\n`,
+  );
+  process.exitCode = 1;
+} else {
+  console.log(`NIGHTGLASS capture matrix gate: PASS (${Object.keys(RESOLUTIONS).length} resolutions)`);
 }
-console.log(`NIGHTGLASS capture matrix gate: PASS (${Object.keys(RESOLUTIONS).length} resolutions)`);
 
 function validateVisualInspection() {
   const file = path.join(ROOT, 'visual-inspection.json');

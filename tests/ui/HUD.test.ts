@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CROSSHAIR_SPREAD_RAD_TO_PX,
@@ -68,6 +70,39 @@ describe('mission interact slot priority', () => {
       }),
     ).toBeNull();
   });
+
+  it('lets jammer interact beat a frag toast', () => {
+    expect(
+      resolveMissionInteractPrompt({
+        jammerInteractAvailable: true,
+        waveToastRemaining: 0,
+        fragToastRemaining: 2.4,
+        fragCount: 1,
+      }),
+    ).toBe('DISABLE SIGNAL JAMMER');
+  });
+
+  it('lets frag toast beat an active wave toast so a throw is not wiped same tick', () => {
+    expect(
+      resolveMissionInteractPrompt({
+        jammerInteractAvailable: false,
+        waveToastRemaining: 1.1,
+        fragToastRemaining: 2.0,
+        fragCount: 1,
+      }),
+    ).toBe('FRAG OUT — 1 REMAINING');
+  });
+
+  it('keeps FRAG OUT while the timer runs, including the last grenade', () => {
+    expect(
+      resolveMissionInteractPrompt({
+        jammerInteractAvailable: false,
+        waveToastRemaining: 0,
+        fragToastRemaining: 1.5,
+        fragCount: 0,
+      }),
+    ).toBe('FRAG OUT — 0 REMAINING');
+  });
 });
 
 describe('death restore subtitle', () => {
@@ -75,5 +110,22 @@ describe('death restore subtitle', () => {
     expect(resolveDeathRestoreSubtitle(true)).toBe('Restoring the last secure checkpoint.');
     expect(resolveDeathRestoreSubtitle(false)).toBe('Restarting Operation Nightglass.');
     expect(resolveDeathRestoreSubtitle(false)).not.toMatch(/checkpoint/i);
+  });
+});
+
+describe('session restore HUD rewind', () => {
+  it('clears damage vignette with the other combat-telemetry latches', () => {
+    const src = readFileSync(path.join(process.cwd(), 'src/main.ts'), 'utf8');
+    const start = src.indexOf('private restoreSessionWorld');
+    const end = src.indexOf('private handleSessionEvent');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const restore = src.slice(start, end);
+    expect(restore).toContain('this.hud.clearKillfeed()');
+    expect(restore).toContain('this.hud.clearHitmarker()');
+    expect(restore).toContain('this.hud.clearCheckpoint()');
+    expect(restore).toContain('this.hud.clearDamage()');
+    expect(restore).toContain('this.post.setDamageIntensity(0)');
+    expect(restore).toContain('this.cameraFeel.resetView(this.weapons.isADS())');
   });
 });

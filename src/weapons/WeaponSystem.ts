@@ -2,6 +2,7 @@ import {
   AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
+  DynamicDrawUsage,
   Line,
   LineBasicMaterial,
   MathUtils,
@@ -27,6 +28,7 @@ import { ViewModel, type WeaponId } from './ViewModel';
  * which is what makes automatic fire look like rounds in flight.
  */
 interface TracerLine {
+  active: boolean;
   line: Line;
   positions: Float32Array;
   origin: Vector3;
@@ -46,6 +48,8 @@ const TRACER_SPEED = 340;
 const TRACER_MAX_LIFE = 0.45;
 /** Every Nth round is a bright tracer; the rest are dim, short scratches. */
 const TRACER_CADENCE = 3;
+/** Covers a full automatic burst at the configured visual lifetime. */
+const TRACER_POOL_SIZE = 12;
 
 /** Rounds over which sustained fire reaches its full recoil climb. */
 const RECOIL_CLIMB_ROUNDS = 7;
@@ -135,6 +139,8 @@ export interface WeaponSystemOptions {
   colliders?: WorldCollider[];
   /** Dedicated presentation scene; world rendering is kept separate. */
   viewModelScene?: Scene;
+  /** Optional world scene used to preallocate tracer geometry before combat. */
+  scene?: Scene;
   /** Serializable randomness for every simulation-affecting shot. */
   random?: SeededRandom;
   /** Separate visual stream so render effects never consume combat RNG. */
@@ -267,6 +273,7 @@ export class WeaponSystem {
   private readonly keys = new Set<string>();
   private disposeFns: Array<() => void> = [];
   private readonly tracers: TracerLine[] = [];
+  private readonly tracerPool: TracerLine[] = [];
   private scene: Scene | null = null;
   private simulationTick = 0;
   private readonly shotRecords: ShotRecord[] = [];
@@ -275,6 +282,9 @@ export class WeaponSystem {
   private readonly origin = new Vector3();
   private readonly direction = new Vector3();
   private readonly _forward = new Vector3();
+  private readonly _right = new Vector3();
+  private readonly _up = new Vector3();
+  private readonly _muzzle = new Vector3();
   private readonly _tracerEnd = new Vector3();
 
   constructor(options: WeaponSystemOptions) {
@@ -290,12 +300,14 @@ export class WeaponSystem {
     this.onViewPunch = options.callbacks?.onViewPunch;
     this.onDryFire = options.callbacks?.onDryFire;
     this.random = options.random ?? new SeededRandom(0x5745504e);
+    this.scene = options.scene ?? null;
 
     this.viewModel = new ViewModel(
       options.viewModelCamera ?? this.camera,
       options.viewModelScene,
       options.presentationRandom,
     );
+    if (this.scene) this.initializeTracerPool(this.scene);
     // GameSession play path disables this so only PlayerController samples DOM.
     if (options.captureDomInput !== false) {
       this.bindInput();
@@ -335,6 +347,21 @@ export class WeaponSystem {
   getAmmo(): AmmoState | null {
     if (this.active === 'knife') return null;
     return { ...this.ammo[this.active] };
+  }
+
+  /** Deterministic encounter reward; returns the rounds actually accepted. */
+  resupply(rounds: Partial<Record<'ar' | 'pistol', number>>): { ar: number; pistol: number } {
+    const added = { ar: 0, pistol: 0 };
+    for (const weapon of ['ar', 'pistol'] as const) {
+      const requested = Math.max(0, Math.floor(rounds[weapon] ?? 0));
+      const before = this.ammo[weapon].reserve;
+      this.ammo[weapon].reserve = Math.min(
+        WEAPON_DEFS[weapon].reserveMax,
+        before + requested,
+      );
+      added[weapon] = this.ammo[weapon].reserve - before;
+    }
+    return added;
   }
 
   isADS(): boolean {
@@ -419,12 +446,16 @@ export class WeaponSystem {
     this.prevFire = snapshot.prevFire === true;
     this.random.restore(snapshot.randomState);
     this.viewModel.switchWeapon(snapshot.active);
+    // switchWeapon no-ops on the already-drawn gun, so a paused rewind would
+    // keep kick/heat/brass/flash. Snap presentation, then replay a mid-reload.
+    this.viewModel.resetPresentation(snapshot.ads && !snapshot.reloading);
     if (snapshot.reloading) {
       this.viewModel.playReload(
         Math.max(0.01, snapshot.reloadTimer),
         snapshot.active !== 'knife' && snapshot.ammo[snapshot.active].mag <= 0,
       );
-    } else this.viewModel.cancelReload();
+    }
+    this.clearTracers();
   }
 
   /** Restores a fresh loadout without touching the shared simulation RNG. */
@@ -457,7 +488,8 @@ export class WeaponSystem {
     this.pendingWeaponCycle = 0;
     this.shotRecords.length = 0;
     this.viewModel.switchWeapon('ar');
-    this.viewModel.cancelReload();
+    this.viewModel.resetPresentation(false);
+    this.clearTracers();
     if (this.authoredRifleOnly) this.setAuthoredRifleOnly(true);
   }
 
@@ -529,6 +561,7 @@ export class WeaponSystem {
   update(dt: number, scene: Scene, enemies: HitscanEnemy[]): void {
     const clampedDt = Math.min(dt, 0.05);
     this.scene = scene;
+    this.initializeTracerPool(scene);
 
     const input = this.sessionInput;
     // When GameSession drives combat, InputFrame is the only authority — never
@@ -694,9 +727,9 @@ export class WeaponSystem {
     const sy = (this.random.next() - 0.5) * 2 * spread;
     this.direction.copy(this._forward);
     // Build orthonormal basis for spread
-    const right = new Vector3().crossVectors(this._forward, this.camera.up).normalize();
-    const up = new Vector3().crossVectors(right, this._forward).normalize();
-    this.direction.addScaledVector(right, sx).addScaledVector(up, sy).normalize();
+    this._right.crossVectors(this._forward, this.camera.up).normalize();
+    this._up.crossVectors(this._right, this._forward).normalize();
+    this.direction.addScaledVector(this._right, sx).addScaledVector(this._up, sy).normalize();
 
     const hit = this.resolveHitscan(enemies, def.range);
 
@@ -705,8 +738,8 @@ export class WeaponSystem {
       this.origin,
       this.direction,
       hit?.distance ?? def.range,
-      right,
-      up,
+      this._right,
+      this._up,
       shotIndex % TRACER_CADENCE === 0,
     );
 
@@ -756,46 +789,50 @@ export class WeaponSystem {
     bright: boolean,
   ): void {
     if (!this.scene) return;
+    this.initializeTracerPool(this.scene);
+    let tracer: TracerLine | undefined;
+    for (const candidate of this.tracerPool) {
+      if (!candidate.active) {
+        tracer = candidate;
+        break;
+      }
+    }
+    if (!tracer) {
+      // Pool exhaustion is presentation-only. Recycle the oldest line instead
+      // of allocating in the middle of an unusually dense burst.
+      tracer = this.tracers.shift();
+      if (!tracer) return;
+      tracer.active = false;
+    }
     const travel = MathUtils.clamp(length, 1.2, 240);
-    const muzzle = origin.clone()
+    this._muzzle.copy(origin)
       .addScaledVector(direction, 0.5)
       .addScaledVector(right, this.ads ? 0.02 : 0.16)
       .addScaledVector(up, this.ads ? -0.03 : -0.1);
-
-    const positions = new Float32Array(6);
-    positions[0] = muzzle.x;
-    positions[1] = muzzle.y;
-    positions[2] = muzzle.z;
-    positions[3] = muzzle.x;
-    positions[4] = muzzle.y;
-    positions[5] = muzzle.z;
-    const geo = new BufferGeometry();
-    geo.setAttribute('position', new BufferAttribute(positions, 3));
-    const mat = new LineBasicMaterial({
-      color: bright ? 0xfff0c0 : 0xffb060,
-      transparent: true,
-      opacity: bright ? 0.95 : 0.4,
-      depthWrite: false,
-      blending: AdditiveBlending,
-    });
-    const line = new Line(geo, mat);
-    line.frustumCulled = false;
-    this.scene.add(line);
-
-    this.tracers.push({
-      line,
-      positions,
-      origin: muzzle,
-      direction: direction.clone(),
-      travel,
-      head: 0,
-      tail: 0,
-      speed: TRACER_SPEED,
-      trail: bright ? 9 : 3.2,
-      life: 0,
-      maxLife: TRACER_MAX_LIFE,
-      intensity: bright ? 0.95 : 0.4,
-    });
+    const positions = tracer.positions;
+    positions[0] = this._muzzle.x;
+    positions[1] = this._muzzle.y;
+    positions[2] = this._muzzle.z;
+    positions[3] = this._muzzle.x;
+    positions[4] = this._muzzle.y;
+    positions[5] = this._muzzle.z;
+    tracer.origin.copy(this._muzzle);
+    tracer.direction.copy(direction);
+    tracer.travel = travel;
+    tracer.head = 0;
+    tracer.tail = 0;
+    tracer.speed = TRACER_SPEED;
+    tracer.trail = bright ? 9 : 3.2;
+    tracer.life = 0;
+    tracer.maxLife = TRACER_MAX_LIFE;
+    tracer.intensity = bright ? 0.95 : 0.4;
+    tracer.active = true;
+    tracer.line.visible = true;
+    tracer.line.geometry.attributes.position.needsUpdate = true;
+    const material = tracer.line.material as LineBasicMaterial;
+    material.color.setHex(bright ? 0xfff0c0 : 0xffb060);
+    material.opacity = tracer.intensity;
+    this.tracers.push(tracer);
   }
 
   private updateTracers(dt: number): void {
@@ -823,21 +860,66 @@ export class WeaponSystem {
       mat.opacity = t.intensity * fade;
 
       if ((t.head >= t.travel && t.tail >= t.travel) || t.life >= t.maxLife) {
-        this.disposeTracer(t);
+        this.releaseTracer(t);
         this.tracers.splice(i, 1);
       }
     }
   }
 
-  private disposeTracer(t: TracerLine): void {
-    t.line.removeFromParent();
-    t.line.geometry.dispose();
-    const mat = t.line.material;
-    if (Array.isArray(mat)) {
-      for (const m of mat) m.dispose();
-    } else {
-      mat.dispose();
+  private initializeTracerPool(scene: Scene): void {
+    if (this.tracerPool.length > 0) {
+      for (const tracer of this.tracerPool) {
+        if (tracer.line.parent !== scene) scene.add(tracer.line);
+      }
+      return;
     }
+    for (let index = 0; index < TRACER_POOL_SIZE; index += 1) {
+      const positions = new Float32Array(6);
+      const geometry = new BufferGeometry();
+      geometry.setAttribute(
+        'position',
+        new BufferAttribute(positions, 3).setUsage(DynamicDrawUsage),
+      );
+      const material = new LineBasicMaterial({
+        color: 0xffb060,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: AdditiveBlending,
+      });
+      const line = new Line(geometry, material);
+      line.name = `TracerPool:${index}`;
+      line.frustumCulled = false;
+      line.visible = false;
+      scene.add(line);
+      this.tracerPool.push({
+        active: false,
+        line,
+        positions,
+        origin: new Vector3(),
+        direction: new Vector3(),
+        travel: 0,
+        head: 0,
+        tail: 0,
+        speed: TRACER_SPEED,
+        trail: 0,
+        life: 0,
+        maxLife: TRACER_MAX_LIFE,
+        intensity: 0,
+      });
+    }
+  }
+
+  private releaseTracer(tracer: TracerLine): void {
+    tracer.active = false;
+    tracer.line.visible = false;
+    (tracer.line.material as LineBasicMaterial).opacity = 0;
+  }
+
+  /** Drop live streaks so a paused rematch cannot keep rounds in flight. */
+  private clearTracers(): void {
+    for (const tracer of this.tracers) this.releaseTracer(tracer);
+    this.tracers.length = 0;
   }
 
   /** Live tracer streaks, for tests and debug overlays. */
@@ -1049,8 +1131,13 @@ export class WeaponSystem {
     for (const fn of this.disposeFns) fn();
     this.disposeFns.length = 0;
     this.sessionInput = null;
-    for (const t of this.tracers) this.disposeTracer(t);
-    this.tracers.length = 0;
+    this.clearTracers();
+    for (const tracer of this.tracerPool) {
+      tracer.line.removeFromParent();
+      tracer.line.geometry.dispose();
+      (tracer.line.material as LineBasicMaterial).dispose();
+    }
+    this.tracerPool.length = 0;
     this.viewModel.dispose();
   }
 }

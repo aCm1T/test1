@@ -1,6 +1,11 @@
 # NIGHTGLASS release review — 2026-07-30
 
-## Result: BLOCKED — do not commit or publish
+## Result: STRICT AUTHORED-ASSET PROFILE BLOCKED
+
+This document covers the optional strict authored-asset profile only. The
+procedural standalone browser release has its own gate and may be published
+when `npm run release:standalone` passes; see `docs/STANDALONE-RELEASE.md`.
+Nothing in the standalone profile counts as a pass for the requirements below.
 
 The implementation foundation builds, its deterministic automated suite
 passes, and the production bundle survives Chromium quick/debug captures. It

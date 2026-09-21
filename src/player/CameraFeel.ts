@@ -303,15 +303,42 @@ export class CameraFeel {
     }
   }
 
-  dispose(): void {
-    this.shakeIntensity = 0;
+  /**
+   * Snap every view impulse to rest. Pause freezes these springs, so rematch
+   * and session restore would otherwise spawn with leftover slide dip, ADS FOV,
+   * recoil punch, or damage shake from the previous timeline.
+   */
+  resetView(ads = false): void {
+    this.bobPhase = 0;
+    this.breathPhase = 0;
+    this.bobBlend = 0;
     this.landOffset = 0;
+    this.landVel = 0;
+    this.shakeIntensity = 0;
+    this.shakeTime = 0;
+    this.feelPitch = 0;
+    this.shakeOffset.set(0, 0, 0);
     this.punchPitch = 0;
     this.punchYaw = 0;
     this.punchRoll = 0;
     this.punchVelPitch = 0;
     this.punchVelYaw = 0;
     this.punchVelRoll = 0;
+    this.slideBlend = 0;
+    this.slideSurge = 0;
+    this.slideSurgeVel = 0;
+    this.mantleLift = 0;
+    this.mantleLiftVel = 0;
+    const baseEyeY = this.player ? this.player.getEyeHeight() : this.camera.position.y;
+    const basePitch = this.player ? this.player.getPitch() : this.camera.rotation.x;
+    this.camera.position.set(0, baseEyeY, 0);
+    this.camera.rotation.set(basePitch, 0, 0);
+    this.camera.fov = ads ? this.adsFov : this.hipFov;
+    this.camera.updateProjectionMatrix();
+  }
+
+  dispose(): void {
+    this.resetView();
   }
 
   private integrateSprings(dt: number): void {

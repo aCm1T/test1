@@ -25,6 +25,18 @@ afterEach(() => {
 });
 
 describe('PlayerController fixed-tick input sampling', () => {
+  it('keeps the game flow alive when the browser rejects pointer lock', () => {
+    const player = new PlayerController();
+    const element = {
+      requestPointerLock: () => {
+        throw new DOMException('The document is not focused', 'WrongDocumentError');
+      },
+    } as HTMLElement;
+
+    expect(() => player.requestPointerLock(element)).not.toThrow();
+    player.dispose();
+  });
+
   it('captures held controls and consumes pointer/action edges exactly once', () => {
     const player = new PlayerController();
     testDocument.pointerLockElement = {};

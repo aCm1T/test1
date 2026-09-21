@@ -13,6 +13,7 @@ import type {
   AssetLoadContext,
   BuiltInAssetKind,
 } from './AssetRegistry';
+import { assetUrl } from '../AssetPaths';
 
 export interface ThreeAssetLoaderOptions {
   /** Public directory containing the Draco WASM/JS decoder pair. */
@@ -40,11 +41,11 @@ export function createThreeAssetLoaders(
 ): ThreeAssetLoaders {
   const manager = options.manager ?? new LoadingManager();
   const draco = new DRACOLoader(manager);
-  draco.setDecoderPath(options.dracoDecoderPath ?? '/assets/decoders/draco/');
+  draco.setDecoderPath(options.dracoDecoderPath ?? assetUrl('assets/decoders/draco/'));
 
   const ktx2 = new KTX2Loader(manager);
   ktx2
-    .setTranscoderPath(options.ktx2TranscoderPath ?? '/assets/decoders/basis/')
+    .setTranscoderPath(options.ktx2TranscoderPath ?? assetUrl('assets/decoders/basis/'))
     .detectSupport(options.renderer);
 
   const gltf = new GLTFLoader(manager)

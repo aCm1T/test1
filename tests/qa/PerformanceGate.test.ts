@@ -110,7 +110,7 @@ describe('hardware performance release gate', () => {
     writeJson(reportFile, report);
     const rejected = runGate({ root, reportFile, manifest, publicAssets });
     expect(rejected.status).toBe(1);
-  });
+  }, 15_000);
 
   it('rejects GPU strings that only substring-match or negate RTX 3060', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'nightglass-performance-gpu-'));

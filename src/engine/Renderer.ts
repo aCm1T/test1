@@ -1,7 +1,7 @@
 import {
   ACESFilmicToneMapping,
   Color,
-  PCFSoftShadowMap,
+  PCFShadowMap,
   PerspectiveCamera,
   AmbientLight,
   DirectionalLight,
@@ -345,7 +345,10 @@ export class GameRenderer {
     renderer.toneMappingExposure = options.exposure ?? DEFAULT_EXPOSURE;
 
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = PCFSoftShadowMap;
+    // Three r185 maps the removed PCFSoft path back to PCF and warns every
+    // launch. Use the supported mode directly; CSM controls softness through
+    // its cascade maps and light shadow settings.
+    renderer.shadowMap.type = PCFShadowMap;
     renderer.shadowMap.autoUpdate = true;
 
     renderer.setClearColor(new Color(options.clearColor ?? DEFAULT_CLEAR_COLOR), 1);

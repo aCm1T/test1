@@ -402,6 +402,10 @@ export class DecalManager {
     }
   }
 
+  /**
+   * Hide every live hole. Bullet holes last ~45s and QA freeze stops ageing,
+   * so a rewind would otherwise keep impacts from the discarded timeline.
+   */
   clear(): void {
     for (let index = 0; index < this.pool.length; index += 1) {
       this.release(this.pool[index], index);

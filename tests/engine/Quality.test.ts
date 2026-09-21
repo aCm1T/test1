@@ -58,6 +58,17 @@ test('medium profile enables volumetric fog for capture-common depth', () => {
   assert.equal(selection.profile.volumetricFog, true);
 });
 
+test('auto starts at high when capability limits alone suggest ultra', () => {
+  const selection = selectQualityProfile(capableDesktop, 'auto');
+  assert.equal(selection.recommended, 'ultra');
+  assert.equal(selection.profile.tier, 'high');
+  assert.equal(selection.constrained, true);
+  assert.match(selection.reasons.join(' '), /fill-rate/);
+
+  const explicit = selectQualityProfile(capableDesktop, 'ultra');
+  assert.equal(explicit.profile.tier, 'ultra');
+});
+
 test('capability detection accepts a renderer-shaped object for testability', () => {
   const detected = detectGraphicsCapabilities(
     {

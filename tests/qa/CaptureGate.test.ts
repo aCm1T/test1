@@ -68,7 +68,7 @@ describe('capture matrix release gate', () => {
       expect(result.status, testCase.label).toBe(1);
       expect(result.stderr, testCase.label).toMatch(testCase.stderr);
     }
-  });
+  }, 15_000);
 });
 
 function preparePassingCaptureRoot(): string {

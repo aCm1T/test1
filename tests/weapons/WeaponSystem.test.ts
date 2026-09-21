@@ -406,13 +406,29 @@ describe('seeded WeaponSystem shots', () => {
     test.weapon.setSessionInput(inputFrame({ fire: true, firePressed: true }));
     for (let i = 0; i < 12; i++) test.weapon.update(1 / 60, test.scene, []);
     const afterFireRandom = test.weapon.snapshotState().randomState;
+    expect(test.weapon.getActiveTracerCount()).toBeGreaterThan(0);
     test.weapon.switchWeapon('pistol');
     test.weapon.reset();
     expect(test.weapon.getActiveWeapon()).toBe('ar');
     expect(test.weapon.getAmmo()).toEqual({ mag: 30, reserve: 90, magSize: 30 });
     expect(test.weapon.isReloading()).toBe(false);
     expect(test.weapon.getSpreadBloom()).toBe(0);
+    expect(test.weapon.getActiveTracerCount()).toBe(0);
     expect(test.weapon.snapshotState().randomState).toBe(afterFireRandom);
+    test.weapon.dispose();
+  });
+
+  it('resupplies reserves deterministically and respects weapon capacity', () => {
+    const test = createWeapon(19);
+    const snapshot = test.weapon.snapshotState();
+    snapshot.ammo.ar.reserve = 112;
+    snapshot.ammo.pistol.reserve = 47;
+    test.weapon.restoreState(snapshot);
+
+    expect(test.weapon.resupply({ ar: 30, pistol: 12 })).toEqual({ ar: 8, pistol: 1 });
+    expect(test.weapon.snapshotState().ammo.ar.reserve).toBe(120);
+    expect(test.weapon.snapshotState().ammo.pistol.reserve).toBe(48);
+    expect(test.weapon.resupply({ ar: 30, pistol: 12 })).toEqual({ ar: 0, pistol: 0 });
     test.weapon.dispose();
   });
 });

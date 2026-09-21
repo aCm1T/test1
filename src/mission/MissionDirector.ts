@@ -288,6 +288,11 @@ export class MissionDirector {
     return this.beat;
   }
 
+  /** Fixed-step mission time, used by deterministic integration-layer gates. */
+  getElapsed(): number {
+    return this.elapsed;
+  }
+
   getObjectiveText(): string {
     switch (this.beat) {
       case 'insertion': return 'Advance north and make first contact';
@@ -520,7 +525,17 @@ export function shouldApplyCombatDamage(state: {
   paused: boolean;
   playerDead: boolean;
   beat: MissionBeat;
+  /** Fixed-step mission time. Omit when no opening protection is requested. */
+  missionElapsed?: number;
+  /** Seconds during insertion in which gunfire is warning-only. */
+  openingProtectionSeconds?: number;
 }): boolean {
   if (!state.playing || state.paused || state.playerDead) return false;
+  const openingProtection = Math.max(0, state.openingProtectionSeconds ?? 0);
+  if (
+    state.beat === 'insertion'
+    && openingProtection > 0
+    && Math.max(0, state.missionElapsed ?? 0) < openingProtection
+  ) return false;
   return state.beat !== 'complete' && state.beat !== 'failed';
 }

@@ -128,13 +128,16 @@ if (compressedPayloadBytes !== null) {
 }
 
 if (errors.length > 0) {
-  console.error('NIGHTGLASS hardware performance gate: BLOCKED');
-  for (const error of errors) console.error(`- ${error}`);
-  process.exit(1);
+  fs.writeSync(
+    process.stderr.fd,
+    `NIGHTGLASS hardware performance gate: BLOCKED\n${errors.map((error) => `- ${error}`).join('\n')}\n`,
+  );
+  process.exitCode = 1;
+} else {
+  console.log(
+    `NIGHTGLASS hardware performance gate: PASS (${samples.length} raw frames, ${derived.durationSeconds.toFixed(1)}s)`,
+  );
 }
-console.log(
-  `NIGHTGLASS hardware performance gate: PASS (${samples.length} raw frames, ${derived.durationSeconds.toFixed(1)}s)`,
-);
 
 function computeRuntimePayloadBytes() {
   if (!fs.existsSync(MANIFEST)) {
@@ -261,6 +264,6 @@ function readJson(file) {
 }
 
 function fail(message) {
-  console.error(`NIGHTGLASS hardware performance gate: BLOCKED — ${message}`);
+  fs.writeSync(process.stderr.fd, `NIGHTGLASS hardware performance gate: BLOCKED — ${message}\n`);
   process.exit(1);
 }

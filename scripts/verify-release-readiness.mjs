@@ -8,7 +8,6 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 const ROOT = process.cwd();
 const MANIFEST = path.join(ROOT, 'public/assets/manifest.json');
@@ -38,10 +37,10 @@ const remainingGates = [
   },
 ];
 
-console.log('NIGHTGLASS release readiness');
-console.log('----------------------------');
+printLine('NIGHTGLASS release readiness');
+printLine('----------------------------');
 
-const assets = runAssetsGate();
+const assets = await runAssetsGate();
 printGate('qa:assets', assets.ok ? 'PASS (subgate only)' : 'BLOCKED', assets.detail);
 
 const references = countLegalReferences();
@@ -52,42 +51,49 @@ printGate(
   `${references} of ${REQUIRED_REFERENCES} legal matched references in manifest`,
 );
 
-console.log('');
-console.log('Remaining release gates (not run by this script — must pass before release):');
+printLine('');
+printLine('Remaining release gates (not run by this script — must pass before release):');
 for (const gate of remainingGates) {
-  console.log(`- [${gate.id}] NOT EVIDENCED`);
-  console.log(`  required: ${gate.command}`);
-  console.log(`  why: ${gate.reason}`);
-  console.log(`  see: ${gate.doc}`);
+  printLine(`- [${gate.id}] NOT EVIDENCED`);
+  printLine(`  required: ${gate.command}`);
+  printLine(`  why: ${gate.reason}`);
+  printLine(`  see: ${gate.doc}`);
 }
 
-console.log('');
+printLine('');
 if (!assets.ok) {
-  console.error('NIGHTGLASS release readiness: BLOCKED — qa:assets failed');
-  process.exit(1);
+  fs.writeSync(process.stderr.fd, 'NIGHTGLASS release readiness: BLOCKED — qa:assets failed\n');
+  process.exitCode = 1;
+} else {
+  fs.writeSync(
+    process.stderr.fd,
+    'NIGHTGLASS release readiness: BLOCKED — assets gate ok, but capture/perf/blind evidence is not invented or verified here\n',
+  );
+  process.exitCode = 1;
 }
 
-console.error(
-  'NIGHTGLASS release readiness: BLOCKED — assets gate ok, but capture/perf/blind evidence is not invented or verified here',
-);
-process.exit(1);
-
-function runAssetsGate() {
-  const result = spawnSync(process.execPath, [path.join('scripts', 'verify-nightglass-assets.mjs')], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    env: process.env,
-  });
-  const stdout = result.stdout?.trim() ?? '';
-  const stderr = result.stderr?.trim() ?? '';
-  if (stdout) console.log(stdout);
-  if (stderr) console.error(stderr);
-  return {
-    ok: result.status === 0,
-    detail: result.status === 0
-      ? 'asset release gate passed'
-      : `asset release gate exited ${result.status ?? 'null'}`,
-  };
+async function runAssetsGate() {
+  // Run the authoritative gate in-process. Nested process creation is denied
+  // by some CI/sandbox runners and previously made qa:release report an empty
+  // failure with no evidence, even though qa:assets itself was healthy.
+  const priorExitCode = process.exitCode;
+  process.exitCode = 0;
+  try {
+    await import('./verify-nightglass-assets.mjs');
+    const status = Number(process.exitCode ?? 0);
+    return {
+      ok: status === 0,
+      detail: status === 0
+        ? 'asset release gate passed'
+        : `asset release gate exited ${status}`,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    fs.writeSync(process.stderr.fd, `NIGHTGLASS asset release gate: BLOCKED — ${detail}\n`);
+    return { ok: false, detail: 'asset release gate threw while validating' };
+  } finally {
+    process.exitCode = priorExitCode;
+  }
 }
 
 function countLegalReferences() {
@@ -102,6 +108,10 @@ function countLegalReferences() {
 }
 
 function printGate(name, status, detail) {
-  console.log(`- ${name}: ${status}`);
-  if (detail) console.log(`  ${detail}`);
+  printLine(`- ${name}: ${status}`);
+  if (detail) printLine(`  ${detail}`);
+}
+
+function printLine(value) {
+  fs.writeSync(process.stdout.fd, `${value}\n`);
 }

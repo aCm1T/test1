@@ -378,6 +378,39 @@ class ParticleEmitter {
     geo.attributes.size.needsUpdate = true;
   }
 
+  /**
+   * Kill every live particle immediately. Restore / rematch / QA rewind do not
+   * own this pool, so a paused fight would otherwise keep muzzle sparks, blood,
+   * and blast smoke on the restored timeline.
+   */
+  clear(): void {
+    if (this.activeCount === 0) {
+      this.points.visible = false;
+      this.points.geometry.setDrawRange(0, 0);
+      return;
+    }
+    const pos = this.positions;
+    const col = this.colors;
+    const sz = this.sizes;
+    for (let i = 0; i < this.capacity; i++) {
+      const p = this.particles[i];
+      if (!p.active) continue;
+      p.active = false;
+      p.life = 0;
+      const i3 = i * 3;
+      pos[i3 + 1] = -9999;
+      col[i * 4 + 3] = 0;
+      sz[i] = 0;
+    }
+    this.activeCount = 0;
+    this.points.visible = false;
+    const geo = this.points.geometry;
+    geo.setDrawRange(0, 0);
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+    geo.attributes.size.needsUpdate = true;
+  }
+
   dispose(): void {
     this.points.geometry.dispose();
     this.points.material.map?.dispose();
@@ -447,6 +480,10 @@ export class MuzzleFlash {
     this.emitter.update(dt);
   }
 
+  clear(): void {
+    this.emitter.clear();
+  }
+
   dispose(): void {
     this.emitter.dispose();
   }
@@ -509,6 +546,10 @@ export class ImpactSparks {
 
   update(dt: number): void {
     this.emitter.update(dt);
+  }
+
+  clear(): void {
+    this.emitter.clear();
   }
 
   dispose(): void {
@@ -577,6 +618,10 @@ export class SurfaceDebris {
     this.emitter.update(dt);
   }
 
+  clear(): void {
+    this.emitter.clear();
+  }
+
   dispose(): void {
     this.emitter.dispose();
   }
@@ -636,6 +681,10 @@ export class SmokePuff {
 
   update(dt: number): void {
     this.emitter.update(dt);
+  }
+
+  clear(): void {
+    this.emitter.clear();
   }
 
   dispose(): void {
@@ -698,6 +747,10 @@ export class BloodSpray {
 
   update(dt: number): void {
     this.emitter.update(dt);
+  }
+
+  clear(): void {
+    this.emitter.clear();
   }
 
   dispose(): void {
@@ -823,6 +876,12 @@ export class Explosion {
     this.flash.update(dt);
     this.debris.update(dt);
     this.smoke.update(dt);
+  }
+
+  clear(): void {
+    this.flash.clear();
+    this.debris.clear();
+    this.smoke.clear();
   }
 
   dispose(): void {
@@ -1077,6 +1136,21 @@ export class VFXManager {
 
   spawnExplosion(position: Vector3, scale?: number): void {
     this.explosion.burst(position, scale, this.particleMultiplier);
+  }
+
+  /**
+   * Drop muzzle / impact / blood / explosion / smoke. Ambient motes stay —
+   * they are environment, not combat telemetry. Pause and QA freeze these
+   * pools, so rematch and session restore would otherwise keep the previous
+   * timeline's sparks, blood, and blast cloud.
+   */
+  clearCombat(): void {
+    this.muzzle.clear();
+    this.impact.clear();
+    this.debris.clear();
+    this.smoke.clear();
+    this.blood.clear();
+    this.explosion.clear();
   }
 
   setParticleMultiplier(multiplier: number): void {

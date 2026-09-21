@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { assetUrl } from '../AssetPaths';
 import { SurfaceFamily } from '../engine/StaticBatching';
 
 export type NoiseOptions = {
@@ -355,7 +356,7 @@ type DevelopmentPbrMaps = {
   arm: THREE.Texture;
 };
 
-const DEVELOPMENT_PBR_ROOT = '/assets/development/polyhaven';
+const DEVELOPMENT_PBR_ROOT = assetUrl('assets/development/polyhaven').replace(/\/$/, '');
 
 const DEVELOPMENT_PBR_FILES: Record<DevelopmentPbrSurface, {
   color: string;

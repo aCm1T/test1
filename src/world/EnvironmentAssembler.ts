@@ -98,6 +98,8 @@ export class EnvironmentAssembler {
   private readonly buildFallback: EnvironmentAssemblyOptions['buildFallback'];
   private fallback: { dispose(): void } | null = null;
   private group: Group | null = null;
+  /** Cached once at assembly time so the frame loop never traverses the route tree. */
+  private readonly lods: LOD[] = [];
   private mode: 'unloaded' | 'authored' | 'fallback' = 'unloaded';
   private lodBias: number;
   private readonly deferLodUpgrades: boolean;
@@ -127,6 +129,10 @@ export class EnvironmentAssembler {
       }));
       this.scene.add(group);
       this.group = group;
+      this.lods.length = 0;
+      group.traverse((node) => {
+        if (node instanceof LOD) this.lods.push(node);
+      });
       this.mode = 'authored';
       return { mode: 'authored', group };
     } catch (error) {
@@ -138,10 +144,9 @@ export class EnvironmentAssembler {
   }
 
   update(camera: PerspectiveCamera): void {
-    this.group?.updateMatrixWorld();
-    this.group?.traverse((node) => {
-      if (node instanceof LOD) node.update(camera);
-    });
+    if (!this.group) return;
+    this.group.updateMatrixWorld();
+    for (const lod of this.lods) lod.update(camera);
   }
 
   setLodBias(lodBias: number): void {
@@ -263,6 +268,7 @@ export class EnvironmentAssembler {
     // Geometry and textures remain AssetRegistry-owned. UV1 lightmap binding
     // creates module-local material clones, which are disposed here.
     this.group = null;
+    this.lods.length = 0;
     for (const material of this.ownedMaterials) material.dispose();
     this.ownedMaterials.clear();
     this.pendingLodUpgrades = [];
